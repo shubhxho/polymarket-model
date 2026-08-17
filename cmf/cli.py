@@ -70,5 +70,19 @@ def live(
     run_live(load=load, size=size, assets=[a.strip().upper() for a in assets.split(",") if a.strip()])
 
 
+@app.command()
+def docs(port: int = 4173) -> None:
+    """Serve the notation book at docs/ on localhost."""
+    import http.server
+    import socketserver
+    from functools import partial
+
+    root = Path(__file__).resolve().parents[1] / "docs"
+    handler = partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+    with socketserver.TCPServer(("127.0.0.1", port), handler) as httpd:
+        console.print(f"notation book → http://127.0.0.1:{port}/")
+        httpd.serve_forever()
+
+
 if __name__ == "__main__":
     app()

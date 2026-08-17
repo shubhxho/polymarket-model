@@ -64,6 +64,18 @@ uv run cmf live --load checkpoints/fusion.safetensors --size 50
 
 `uv.lock` pins the tree. `uv sync` builds the C++ extension and the MLX env. Do not use pip.
 
+## Notation book
+
+Every symbol used in the C++ engine, simulator, network, and policy is written out as a short monograph (KaTeX, theorem boxes, index):
+
+```bash
+uv run python -m http.server --directory docs 4173
+# or
+uv run cmf docs
+```
+
+Then open [http://127.0.0.1:4173](http://127.0.0.1:4173). Hosted copy: [shubhxho.github.io/polymarket-model](https://shubhxho.github.io/polymarket-model/).
+
 ## Layout
 
 ```
