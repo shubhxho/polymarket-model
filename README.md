@@ -1,3 +1,9 @@
+# CMF-1 0.9M
+
+Model card: [shubhxho.github.io/polymarket-model](https://shubhxho.github.io/polymarket-model/)
+
+A 939k-parameter dual-stream model for Polymarket 15-minute crypto binaries. Fast tape is Binance. Slow tape is the CLOB. Three heads: digital-option prior, fusion transformer, lag tilt.
+
 # Cross-market fusion
 
 Dual-stream model for 15-minute Polymarket crypto binaries. Fast venue is Binance futures. Slow venue is the Polymarket CLOB. Same thesis as [LACUNA](https://github.com/humanplane/cross-market-state-fusion) — information shows up on Binance first — but the implementation is not a 5-tick concat MLP.
@@ -57,9 +63,10 @@ If you need a one-line label: **SOTA vs LACUNA in-sim, not SOTA in the field.**
 
 ```bash
 uv sync
+uv run cmf fetch-data --days 45    # 17k+ real 15m Binance windows
 uv run pytest
-uv run cmf train --pretrain-steps 400 --ppo-updates 40 --eval-episodes 64
-uv run cmf live --load checkpoints/fusion.safetensors --size 50
+uv run cmf train                   # 1600 pretrain + 80 PPO on real+sim mix
+uv run cmf live --load checkpoints/fusion.safetensors --size 5
 ```
 
 `uv.lock` pins the tree. `uv sync` builds the C++ extension and the MLX env. Do not use pip.

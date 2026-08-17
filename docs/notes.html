@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cross-Market Fusion — A Notation Book</title>
+  <meta name="description" content="The mathematics actually implemented in the C++ engine, lag simulator, MLX transformer, and P(up) versus CLOB policy." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=Spectral:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <a class="skip" href="#text">Skip to text</a>
+  <div class="tapes" aria-hidden="true">
+    <div class="tape" id="tape-fast"></div>
+    <div class="tape slow" id="tape-slow"></div>
+  </div>
+  <div class="shell">
+    <nav class="toc" aria-label="Contents">
+      <p class="brand"><a href="./">CMF-1 0.9M</a></p>
+      <p class="meta">A notation book for the model in this repository. Every symbol maps to code.</p>
+      <a class="ch" href="#front">Front matter</a>
+      <a href="#ch1">1. The lag thesis</a>
+      <a href="#ch2">2. Binary contracts</a>
+      <a href="#ch3">3. Microstructure</a>
+      <a href="#ch4">4. Lead–lag</a>
+      <a href="#ch5">5. The simulator</a>
+      <a href="#ch6">6. Dual-stream network</a>
+      <a href="#ch7">7. Training</a>
+      <a href="#ch8">8. The decision rule</a>
+      <a href="#notation">Notation index</a>
+      <a href="#refs">References</a>
+      <div class="tools">
+        <button type="button" id="theme">Theme</button>
+        <a href="./desk.html">Desk</a>
+        <a href="https://github.com/shubhxho/polymarket-model">Code</a>
+      </div>
+    </nav>
+    <main id="text">
+      <p class="kicker">Monograph · matching commit on main</p>
+      <h1>Notes on a two-tape market</h1>
+      <p class="subtitle">
+        What this repository computes, in the notation a microstructure text would use — and only the objects that exist in the C++ engine, the simulator, or the MLX trainer.
+      </p>
+      <p>
+        This is not a survey of prediction markets. It is a companion to
+        <code>csrc/include/cmf/engine.hpp</code>, <code>cmf/simulator.py</code>,
+        <code>cmf/model.py</code>, <code>cmf/ppo.py</code>, and <code>cmf/policy.py</code>.
+        If a symbol does not appear in those files, it is not claimed here.
+      </p>
+
+      <section id="front">
+        <h2>Front matter</h2>
+        <p>
+          Two venues print related prices. Call the liquid futures tape the <em>fast</em> stream
+          \(X\) and the 15-minute Polymarket CLOB the <em>slow</em> stream \(Y\).
+          The model’s job is to form a probability that the binary settles up,
+          \(\hat p_t = \mathbb{P}(S_T > S_0 \mid \mathcal{F}_t)\), and to buy a token
+          only when that probability clears the displayed offer.
+        </p>
+        <div class="box">
+          <p class="lbl">Convention</p>
+          <p>
+            Time is discrete with step \(\Delta t = 1\) second in the simulator.
+            A 15-minute market has \(T = 900\) ticks. The agent sees the last
+            \(H = 64\) ticks. Bold letters are vectors. Code names sit in
+            <code>mono</code> after each definition.
+          </p>
+        </div>
+      </section>
+
+      <section id="ch1">
+        <h2>1. The lag thesis</h2>
+        <p>
+          Write \(S_t\) for the Binance futures mid and \(Q_t\) for the Polymarket
+          up-token mid. The modelling assumption — planted in the simulator, hoped
+          for in production — is that there exists a delay \(\tau \ge 0\) such that
+        </p>
+        <div class="eq">
+          \[
+            Q_t \approx \Pi\!\left(S_{t-\tau}\right) + \eta_t,
+          \]
+        </div>
+        <p>
+          where \(\Pi\) maps a futures path into a binary price in \((0,1)\) and
+          \(\eta_t\) is inventory and reprint noise. In the simulator
+          \(\tau \sim \mathrm{Unif}\{4,\ldots,14\}\) seconds
+          (<code>lag_min</code>, <code>lag_max</code>).
+        </p>
+        <p>
+          LACUNA concatenated five 18-dimensional snapshots. This repository keeps
+          the two tapes separate and lets each attend to the other. The economically
+          interesting direction is slow attending to fast: the CLOB reading a tape
+          that has already moved.
+        </p>
+      </section>
+
+      <section id="ch2">
+        <h2>2. Binary contracts and share PnL</h2>
+        <p>
+          A 15-minute up token pays \(1\) if \(S_T > S_0\) and \(0\) otherwise.
+          The down token pays the complement. With cash \(D\) (dollars) spent at
+          entry price \(p^{\mathrm{in}}\),
+        </p>
+        <div class="eq">
+          \[
+            n = \frac{D}{p^{\mathrm{in}}}, \qquad
+            \mathrm{PnL} = \bigl(p^{\mathrm{out}} - p^{\mathrm{in}}\bigr)\, n.
+          \]
+        </div>
+        <p>
+          That is the Phase-4 LACUNA identity, implemented in
+          <code>LagMarket._close</code>. Training then reports the dimensionless
+          return \(\mathrm{PnL}/D\).
+        </p>
+        <h3>Fills</h3>
+        <p>The book is not a mid. Opening and closing use opposite sides:</p>
+        <div class="eq">
+          \[
+          \begin{aligned}
+            p^{\mathrm{in}}_{\mathrm{UP}} &= a_t, &
+            p^{\mathrm{out}}_{\mathrm{UP}} &= b_t, \\
+            p^{\mathrm{in}}_{\mathrm{DOWN}} &= 1 - b_t, &
+            p^{\mathrm{out}}_{\mathrm{DOWN}} &= 1 - a_t.
+          \end{aligned}
+          \]
+        </div>
+        <p class="src">cmf/simulator.py · _open_price, _close_price</p>
+        <p>
+          At expiry the settlement price is the binary payoff, not the last mid:
+          \(p^{\mathrm{out}}_{\mathrm{UP}} = \mathbf{1}_{S_T > S_0}\).
+        </p>
+        <div class="box remark">
+          <p class="lbl">Remark</p>
+          <p>
+            Buying at the mid and selling at the mid is how a paper engine prints
+            fantasy. A one-tick round trip here pays the spread, and the tests
+            require \(\mathrm{PnL} < 0\) on open-then-close.
+          </p>
+        </div>
+      </section>
+
+      <section id="ch3">
+        <h2>3. Microstructure (C++ engine)</h2>
+        <p>
+          The hot path lives in <code>cmf::FusionEngine</code>. Features are
+          squashed with \(\tanh\) so every coordinate is roughly in \([-1,1]\).
+        </p>
+
+        <h3>3.1 Mid, microprice, imbalance</h3>
+        <div class="eq">
+          \[
+          \begin{aligned}
+            m &= \tfrac12(b^{(1)} + a^{(1)}), \\
+            m^{\star} &= \frac{a^{(1)} q^{b,1} + b^{(1)} q^{a,1}}{q^{b,1}+q^{a,1}}, \\
+            \mathrm{I}_L &= \frac{\sum_{\ell=1}^{L} q^{b,\ell} - \sum_{\ell=1}^{L} q^{a,\ell}}
+                               {\sum_{\ell=1}^{L} q^{b,\ell} + \sum_{\ell=1}^{L} q^{a,\ell}}.
+          \end{aligned}
+          \]
+        </div>
+        <p class="src">cmf::Book::mid, microprice, imbalance · types.hpp</p>
+
+        <h3>3.2 Order-flow imbalance</h3>
+        <p>
+          After Cont, Kukanov and Stoikov (2014). For one side and one level, if
+          the price rises the arriving size is signed as an addition; if it falls,
+          the previous size is removed; if it is unchanged, the size delta is used.
+          Bid and ask contributions are added at \(L=1\) and \(L=5\):
+          \(\mathrm{OFI}_1\), \(\mathrm{OFI}_5\).
+        </p>
+        <p class="src">FusionEngine::ofi_side</p>
+
+        <h3>3.3 Cumulative volume delta</h3>
+        <div class="eq">
+          \[
+            \mathrm{CVD}_t = \sum_{u \le t} \varepsilon_u\, p_u q_u, \qquad
+            \varepsilon_u \in \{+1,-1\}.
+          \]
+        </div>
+        <p>
+          Acceleration is the last increment, scaled by an EMA of notional.
+          A trade is flagged large when its notional exceeds three times that EMA.
+        </p>
+
+        <h3>3.4 Kyle’s \(\lambda\)</h3>
+        <p>
+          Over a window of the last \(W \le 16\) ticks, a one-factor regression of
+          mid returns on signed notional:
+        </p>
+        <div class="eq">
+          \[
+            \hat\lambda = \frac{\sum_i r_i v_i}{\sum_i v_i^2}.
+          \]
+        </div>
+        <p>
+          This is Kyle (1985) in the cheapest discrete form: price impact per unit
+          signed volume. The feature stored is \(\tanh(50\hat\lambda)\).
+        </p>
+
+        <h3>3.5 Hawkes intensity</h3>
+        <p>
+          Two self-exciting counters, buy and sell, with decay \(\beta = 1.6\)
+          and jump \(\alpha = 0.55\):
+        </p>
+        <div class="eq">
+          \[
+            \lambda^{\pm}_{t} = e^{-\beta\Delta t}\,\lambda^{\pm}_{t-} + \alpha\,\mathbf{1}_{\{\varepsilon_t = \pm 1\}}.
+          \]
+        </div>
+        <p>
+          Flow imbalance is
+          \((\lambda^{+} - \lambda^{-})/(\lambda^{+} + \lambda^{-} + 1)\).
+          The simulator uses the same family with \(\beta = 1.4\), \(\alpha = 0.7\).
+        </p>
+
+        <h3>3.6 VPIN</h3>
+        <p>
+          Volume is packed into buckets of target size \(8\) times a typical
+          notional. Bucket \(j\) contributes
+          \(|V^b_j - V^s_j| / V_j\). VPIN is the mean of the last
+          \(16\) such imbalances (Easley, López de Prado, O’Hara).
+        </p>
+
+        <h3>3.7 Realized volatility and book slope</h3>
+        <div class="eq">
+          \[
+            \sigma_n = \sqrt{\frac{1}{n}\sum_{i=1}^{n} r_i^2}, \qquad
+            \mathrm{slope}
+              = \frac{\sum_\ell |p_\ell - m|\, q_\ell}{\sum_\ell |p_\ell - m|^2}.
+          \]
+        </div>
+        <p>
+          Vol expansion is \(\sigma_5 / \sigma_{20} - 1\). The stored slope feature
+          is bid slope minus ask slope.
+        </p>
+      </section>
+
+      <section id="ch4">
+        <h2>4. Lead–lag</h2>
+        <p>
+          Hayashi and Yoshida (2005) estimate covariance of asynchronous returns
+          without interpolation. The engine uses a discrete cousin: Pearson
+          correlation of fast returns \(\{r^X_i\}\) with slow returns shifted by
+          \(k \in \{0,1,2,4,8,16\}\) ticks, on the last \(48\) overlapping pairs.
+        </p>
+        <div class="eq">
+          \[
+            \rho(k) = \mathrm{Corr}\bigl(r^X_{i},\, r^Y_{i+k}\bigr).
+          \]
+        </div>
+        <p>
+          Lead strength is \(\max_k \rho(k) - \rho(0)\). Estimated lag is
+          \(\arg\max_k \rho(k) / 16\). Both are clamped to \([-1,1]\).
+        </p>
+        <p class="src">FusionEngine::fill_lag, lagged_corr</p>
+        <div class="box">
+          <p class="lbl">Definition — lead strength</p>
+          <p>
+            If the slow tape is a delayed copy of the fast tape, \(\rho(k)\)
+            peaks at \(k \approx \tau\), not at \(0\). The excess correlation is
+            the scalar the network is allowed to see without discovering delay
+            from scratch.
+          </p>
+        </div>
+      </section>
+
+      <section id="ch5">
+        <h2>5. The simulator</h2>
+        <p>
+          Futures follow a jump-diffusion with Hawkes-signed flow. With
+          \(Z_t \sim \mathcal{N}(0,1)\) and occasional Gaussian jumps \(J_t\),
+        </p>
+        <div class="eq">
+          \[
+            S_{t} = S_{t-1}
+              \exp\!\Bigl(\bigl(\mu - \tfrac12\sigma^2\bigr)\Delta t
+              + \sigma\sqrt{\Delta t}\, Z_t + J_t\Bigr)
+              \exp(\varepsilon_t \cdot 0.08\sigma).
+          \]
+        </div>
+        <p>
+          The unlagged fair for the binary is a logistic of the normalized move
+          from the window open:
+        </p>
+        <div class="eq">
+          \[
+            \nu = \mathrm{sd}(\Delta S / S)\sqrt{900}, \qquad
+            M_t = \frac{S_t - S_0}{S_0\,\nu}, \qquad
+            f_t = \bigl(1 + e^{-3.4 M_t}\bigr)^{-1}.
+          \]
+        </div>
+        <p>
+          The CLOB does not print \(f_t\). It prints a sticky, lagged quote
+        </p>
+        <div class="eq">
+          \[
+            \tilde f_t = f_{t-\tau} + I_t,
+          \]
+        </div>
+        <p>
+          where \(I_t\) is an AR(1) inventory term (\(0.92, 0.08\)) and the quote
+          only updates if \(|\tilde f_t - Q_{t-}| > 0.012\) or a Poisson clock
+          with probability \(0.08\) fires. Spread widens with quote velocity.
+        </p>
+        <p>
+          Resolution is exactly \(\mathbf{1}_{S_{900} > S_0}\), independent of
+          \(Q_t\). That is why a calibrated \(\hat p_t\) can beat the book:
+          \(f_t\) already knows more than \(Q_t\).
+        </p>
+        <p class="src">LagMarket._simulate_paths</p>
+      </section>
+
+      <section id="ch6">
+        <h2>6. Dual-stream network</h2>
+        <p>
+          Fast tokens \(x_{1:H}\in\mathbb{R}^{H\times 24}\), slow tokens
+          \(y_{1:H}\in\mathbb{R}^{H\times 16}\), position \(u\in\mathbb{R}^{8}\),
+          lag features \(\ell\in\mathbb{R}^{8}\). Width \(d=96\), \(4\) heads,
+          \(3\) blocks. About \(9.4\times 10^5\) parameters.
+        </p>
+
+        <h3>6.1 RMSNorm, RoPE, SwiGLU</h3>
+        <div class="eq">
+          \[
+          \mathrm{RMS}(z) = \frac{z}{\sqrt{\tfrac{1}{d}\lVert z\rVert_2^2 + \varepsilon}} \odot g,
+          \]
+        </div>
+        <div class="eq">
+          \[
+            \mathrm{RoPE}(q,k)\ \text{with base } 10^4
+            \quad\text{(Su et al., RoFormer)},
+          \]
+        </div>
+        <div class="eq">
+          \[
+            \mathrm{SwiGLU}(z) = W_3\bigl(\mathrm{SiLU}(W_1 z)\odot W_2 z\bigr),
+            \quad h = \tfrac83 d\ \text{rounded to a multiple of }8.
+          \]
+        </div>
+
+        <h3>6.2 Attention and fusion</h3>
+        <div class="eq">
+          \[
+            \mathrm{Attn}(Q,K,V) = \mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt{d_h}}\right)V,
+            \quad d_h = d/4.
+          \]
+        </div>
+        <p>
+          Each block does self-attention on each stream, then cross-attention
+          both ways, then SwiGLU. The lag channel is slow queries, fast keys:
+        </p>
+        <div class="eq">
+          \[
+            y \leftarrow y + \mathrm{Attn}(y, x, x).
+          \]
+        </div>
+        <p>
+          Streams are pooled by a one-layer attention pool, then gated:
+        </p>
+        <div class="eq">
+          \[
+          \begin{aligned}
+            z_c &= W_c[u;\ell], \\
+            g &= \sigma\bigl(W_g[z_x; z_y; z_c]\bigr), \\
+            z &= \mathrm{RMS}\bigl(g \odot z_x + (1-g)\odot z_y + z_c\bigr).
+          \end{aligned}
+          \]
+        </div>
+        <p>
+          Heads: policy logits in \(\mathbb{R}^{3}\), value scalar, expiry logit,
+          next-return, lag scalar.
+        </p>
+        <p class="src">cmf/model.py · DualStreamBlock, FusionModel.encode</p>
+      </section>
+
+      <section id="ch7">
+        <h2>7. Training</h2>
+        <h3>7.1 Supervised pretrain</h3>
+        <p>On a frame the losses are</p>
+        <div class="eq">
+          \[
+          \begin{aligned}
+            \mathcal{L}_{\mathrm{bce}} &= \mathrm{BCEWithLogits}(\hat\ell_t, \mathbf{1}_{S_T > S_0}), \\
+            \mathcal{L}_{\mathrm{ret}} &= \bigl(\hat r_{t\to t+5} - r_{t\to t+5}\bigr)^2, \\
+            \mathcal{L}_{\tau} &= \bigl(\hat\tau_t - \tau/16\bigr)^2, \\
+            \mathcal{L}_{\mathrm{bc}} &= -\log \pi_\theta(a^{\star}_t \mid s_t),
+          \end{aligned}
+          \]
+        </div>
+        <p>
+          with \(a^{\star}\) the oracle that buys when unlagged \(f_t\) clears the
+          offer by \(4.5\) cents. The sum used in code is
+          \(\mathcal{L}_{\mathrm{bce}} + \mathcal{L}_{\mathrm{ret}} + \mathcal{L}_{\tau} + 1.15\,\mathcal{L}_{\mathrm{bc}}\).
+          Hold frames are downsampled so behavioural cloning does not collapse to
+          \(\mathrm{HOLD}\).
+        </p>
+
+        <h3>7.2 GAE and PPO</h3>
+        <div class="eq">
+          \[
+            \delta_t = r_t + \gamma V(s_{t+1})(1-d_t) - V(s_t),
+          \]
+        </div>
+        <div class="eq">
+          \[
+            \hat A_t = \sum_{l\ge 0} (\gamma\lambda)^l \delta_{t+l}(1-d_{t+l}),
+            \qquad
+            \hat R_t = \hat A_t + V(s_t).
+          \]
+        </div>
+        <p>
+          Defaults: \(\gamma = 0.97\), \(\lambda = 0.95\), clip \(\varepsilon = 0.2\).
+          The clipped surrogate is the usual PPO objective (Schulman et al. 2017).
+          Value is clipped; entropy of the 3-way actor is regularized; the same
+          auxiliary heads stay on with weight \(0.35\); a \(0.45\) clone term
+          toward the oracle remains so PPO cannot erase pretrain.
+        </p>
+        <p>
+          Fusion <em>actions during rollout</em> are not \(\arg\max\) of the actor.
+          They are the Chapter 8 rule applied to the expiry head. The actor is
+          only a regularizer.
+        </p>
+        <p class="src">cmf/ppo.py · gae, FusionTrainer._loss, Pretrainer._loss</p>
+      </section>
+
+      <section id="ch8">
+        <h2>8. The decision rule</h2>
+        <p>
+          Let \(\hat\ell_t\) be the expiry logit and
+          \(\hat p_t = \sigma(\hat\ell_t)\). Against displayed bid and ask,
+        </p>
+        <div class="eq">
+          \[
+          \begin{aligned}
+            e^{\uparrow}_t &= \hat p_t - a_t, \\
+            e^{\downarrow}_t &= (1-\hat p_t) - (1-b_t).
+          \end{aligned}
+          \]
+        </div>
+        <p>Flat:</p>
+        <div class="eq">
+          \[
+            a_t =
+            \begin{cases}
+              \mathrm{BUY}  & e^{\uparrow}_t > 0.045, \\
+              \mathrm{SELL} & e^{\downarrow}_t > 0.045, \\
+              \mathrm{HOLD} & \text{otherwise.}
+            \end{cases}
+          \]
+        </div>
+        <p>
+          In a position the flip threshold is \(0.10\). The same constants appear
+          in the simulator oracle, which uses true \(f_t\) instead of \(\hat p_t\).
+        </p>
+        <p class="src">cmf/policy.py · decide_from_prob</p>
+        <h3>8.1 Ensemble (desk)</h3>
+        <p>
+          The live desk does not trust one head. Every second it computes a
+          digital-option prior, the fusion \(\hat p\), and a lag tilt, then blends
+        </p>
+        <div class="eq">
+          \[
+            p = 0.45\,\Phi(d_2) + 0.35\,\hat p_{\mathrm{fusion}} + 0.20\,\tilde p_{\mathrm{lag}},
+            \quad
+            d_2 = \frac{\ln(S_t/S_0)-\tfrac12\sigma^2\tau}{\sigma\sqrt{\tau}}.
+          \]
+        </div>
+        <p>
+          A trade fires only if at least two heads agree with the blend, or if
+          \(a_{\mathrm{UP}} + a_{\mathrm{DOWN}} &lt; 1\) (complement arb).
+        </p>
+        <p class="src">cmf/quant.py · ensemble_signal · cmf/ingest.py</p>
+        <div class="box remark">
+          <p class="lbl">What this is not</p>
+          <p>
+            Clearing a 4.5 cent edge on a planted delay is not a live Sharpe.
+            On the held-out simulator the rule made \(+0.04\) units of stake
+            (Sharpe \(0.58\)) against a LACUNA clone at \(-0.47\). The oracle
+            that sees \(f_t\) still leads at \(+0.51\).
+          </p>
+        </div>
+      </section>
+
+      <section id="notation">
+        <h2>Notation index</h2>
+        <table>
+          <thead>
+            <tr><th>Symbol</th><th>Meaning</th><th>Code</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>\(S_t\)</td><td>Binance futures mid</td><td><code>bn_path</code></td></tr>
+            <tr><td>\(Q_t, b_t, a_t\)</td><td>Polymarket mid, bid, ask</td><td><code>mid, bid, ask</code></td></tr>
+            <tr><td>\(\tau\)</td><td>Planted lag (seconds)</td><td><code>true_lag</code></td></tr>
+            <tr><td>\(f_t\)</td><td>Unlagged logistic fair</td><td><code>fair</code></td></tr>
+            <tr><td>\(\hat p_t\)</td><td>Model \(\mathbb{P}(\mathrm{UP})\)</td><td><code>sigmoid(p_up)</code></td></tr>
+            <tr><td>\(n, D\)</td><td>Shares, dollars staked</td><td><code>shares, size</code></td></tr>
+            <tr><td>\(m^\star\)</td><td>Microprice</td><td><code>Book::microprice</code></td></tr>
+            <tr><td>\(\mathrm{I}_L\)</td><td>Depth imbalance, \(L\) levels</td><td><code>imbalance</code></td></tr>
+            <tr><td>\(\mathrm{OFI}_L\)</td><td>Cont–Kukanov–Stoikov OFI</td><td><code>ofi_l1, ofi_l5</code></td></tr>
+            <tr><td>\(\mathrm{CVD}\)</td><td>Cumulative signed notional</td><td><code>cvd</code></td></tr>
+            <tr><td>\(\hat\lambda\)</td><td>Kyle impact</td><td><code>kyle_lambda</code></td></tr>
+            <tr><td>\(\lambda^\pm\)</td><td>Hawkes buy/sell intensity</td><td><code>hawkes_buy/sell</code></td></tr>
+            <tr><td>VPIN</td><td>Bucketed informed-flow proxy</td><td><code>vpin</code></td></tr>
+            <tr><td>\(\rho(k)\)</td><td>Lagged Pearson of returns</td><td><code>lagged_corr</code></td></tr>
+            <tr><td>\(H, d\)</td><td>History 64, width 96</td><td><code>history, dim</code></td></tr>
+            <tr><td>\(\gamma, \lambda_{\mathrm{GAE}}\)</td><td>0.97, 0.95</td><td><code>gamma, gae_lambda</code></td></tr>
+            <tr><td>\(e^{\uparrow}, e^{\downarrow}\)</td><td>Edges vs offer</td><td><code>up_edge, down_edge</code></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="refs">
+        <h2>References</h2>
+        <p>
+          Cont, Kukanov, Stoikov (2014). The price impact of order book events.
+          Kyle (1985). Continuous auctions and insider trading.
+          Easley, López de Prado, O’Hara (2012). Flow toxicity and VPIN.
+          Hawkes (1971). Spectra of some self-exciting point processes.
+          Hayashi, Yoshida (2005). On covariance estimation of non-synchronously observed diffusion processes.
+          Schulman et al. (2017). Proximal policy optimization algorithms.
+          Su et al. (2021). RoFormer.
+          Shazeer (2020). GLU variants improve transformer.
+          Zhang, Sennrich (2019). Root mean square layer normalization.
+          HumanPlane (2025). LACUNA / cross-market-state-fusion.
+        </p>
+      </section>
+
+      <footer>
+        Companion to <a href="https://github.com/shubhxho/polymarket-model">shubhxho/polymarket-model</a>.
+        Serve with <code>uv run python -m http.server --directory docs 4173</code>.
+      </footer>
+    </main>
+  </div>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/contrib/auto-render.min.js"></script>
+  <script defer src="./app.js"></script>
+</body>
+</html>
