@@ -1,0 +1,33 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.4"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cmf"
+version = "0.1.0"
+description = "Dual-stream cross-market fusion for 15-minute Polymarket binaries. C++20 microstructure + MLX transformer PPO."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Shubh" }]
+dependencies = [
+  "mlx>=0.32.0",
+  "numpy>=2.0",
+  "pydantic>=2.10",
+  "safetensors>=0.5",
+  "typer>=0.15",
+  "rich>=13.9",
+  "websockets>=14.0",
+  "aiohttp>=3.11",
+]
+
+[project.scripts]
+cmf = "cmf.cli:app"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["cmf"]
+cmake.version = ">=3.18"
+
+[tool.scikit-build.cmake.define]
+CMAKE_BUILD_TYPE = "Release"
