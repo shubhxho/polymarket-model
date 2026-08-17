@@ -98,7 +98,21 @@ uv run cmf live --live --confirm I_UNDERSTAND_REAL_ORDERS --size 5
 
 Arming live in the desk sends FAK market buys on CLOB V2. Caps: `CMF_MAX_USD`, `CMF_MAX_DAILY_LOSS`. Keys never go to the browser.
 
-Do not post this as “SOTA live PnL.” The honest line is: dual-stream fusion vs LACUNA, in-sim win, live CLOB wired, paper until armed.
+The desk now runs three heads at once, every second:
+
+| head | what it is |
+|---|---|
+| digital | Black–Scholes cash-or-nothing \(\Phi(d_2)\) on \(S_T > S_0\) |
+| fusion | MLX dual-stream transformer (lag reader) |
+| lag tilt | digital shifted by the last 8s Binance move if the CLOB is stale |
+| ensemble | 0.45 / 0.35 / 0.20 blend; trade only if two heads agree |
+| complement | buy both sides if \(a_{\mathrm{up}}+a_{\mathrm{down}}<1\) |
+
+```bash
+uv run cmf signal
+```
+
+Do not post this as “SOTA live PnL.” The honest line is: digital-option + fusion + lag ensemble, CLOB V2 wired, paper until armed. That is the current open-source stack for 15-minute crypto binaries — not a certified live edge.
 
 ## Layout
 

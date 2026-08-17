@@ -103,6 +103,37 @@ def desk(
 
 
 @app.command()
+def signal(assets: str = "BTC,ETH,SOL,XRP") -> None:
+    """One-shot: fetch Gamma + Binance + books, print every head and the ensemble."""
+    import asyncio
+
+    from cmf.ingest import snapshot
+    from cmf.quant import ensemble_signal
+
+    snap = asyncio.run(snapshot([a.strip().upper() for a in assets.split(",") if a.strip()]))
+    for m in snap["markets"]:
+        mk = snap["marks"].get(m["asset"], {})
+        spot = float(mk.get("mark") or 0.0)
+        sig = ensemble_signal(
+            spot=spot or 1.0,
+            strike=spot or 1.0,
+            tau_sec=max((m["end"] - __import__("datetime").datetime.now(__import__("datetime").timezone.utc)).total_seconds(), 1.0),
+            vol=float(mk.get("vol_1s") or 1e-4),
+            ret_lead=float(mk.get("ret_8s") or 0.0),
+            stale_sec=4.0,
+            fusion_p=0.5,
+            ask=0.52,
+            bid=0.48,
+        )
+        console.print(
+            f"{m['asset']:4} digital={sig.digital:.3f} lag={sig.lag:.3f} "
+            f"ens={sig.ensemble:.3f} {sig.reason}"
+        )
+    if not snap["markets"]:
+        console.print("no active 15m markets")
+
+
+@app.command()
 def docs(port: int = 4173) -> None:
     """Serve the notation book at docs/ on localhost."""
     import http.server

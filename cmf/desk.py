@@ -14,8 +14,9 @@ from cmf.broker import ExecutionHub, LiveBroker, PaperBroker
 from cmf.config import TrainConfig
 from cmf.features import featurize_episode, window_at
 from cmf.live import FuturesTape, LiveBook, PolymarketBooks, _raw_ticks, fetch_15m_markets
+from cmf.ingest import binance_marks
 from cmf.model import FusionModel
-from cmf.policy import decide_from_prob
+from cmf.quant import ensemble_signal
 
 DOCS = Path(__file__).resolve().parents[1] / "docs"
 
@@ -36,6 +37,8 @@ class DeskState:
         self.markets: list[dict] = []
         self.history: dict[str, deque] = {}
         self.cards: dict[str, dict[str, Any]] = {}
+        self.opens: dict[str, float] = {}
+        self.marks: dict[str, dict[str, float]] = {}
         self.log: list[dict[str, Any]] = []
         self.tick = 0
         self.model_ok = False
@@ -106,9 +109,18 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
                     state.history.setdefault(m["cid"], deque(maxlen=cfg.history))
             except Exception as exc:  # noqa: BLE001
                 state.note(f"market refresh failed: {exc}")
+        if state.tick == 1 or state.tick % 10 == 0:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    state.marks = await binance_marks(session, state.assets)
+            except Exception as exc:  # noqa: BLE001
+                state.note(f"mark refresh failed: {exc}")
         if state._model is None:
             continue
         mx = state._mx
+        import numpy as np
+
+        names = {0: "HOLD", 1: "BUY UP", 2: "BUY DOWN"}
         for m in state.markets:
             left = (m["end"] - now).total_seconds()
             book = state.books.books.get(m["cid"], LiveBook())
@@ -119,11 +131,11 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
             buf = list(state.history[m["cid"]])
             if len(buf) < 8:
                 continue
-            fr = __import__("numpy").stack([x[0] for x in buf])
-            sr = __import__("numpy").stack([x[1] for x in buf])
+            fr = np.stack([x[0] for x in buf])
+            sr = np.stack([x[1] for x in buf])
             ff, sf, lg = featurize_episode(fr, sr)
             t = ff.shape[0] - 1
-            pos = __import__("numpy").zeros((1, cfg.pos_dim), dtype="float32")
+            pos = np.zeros((1, cfg.pos_dim), dtype="float32")
             pos[0, 5] = left / 900.0
             out = state._model(
                 mx.array(window_at(ff, t, cfg.history)[None, ...]),
@@ -132,15 +144,26 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
                 mx.array(lg[t][None, ...]),
             )
             mx.eval(out.p_up)
-            import numpy as np
-
-            p_up = float(1.0 / (1.0 + np.exp(-float(np.array(out.p_up)[0]))))
+            fusion_p = float(1.0 / (1.0 + np.exp(-float(np.array(out.p_up)[0]))))
             ask = float(book.ask or book.mid)
             bid = float(book.bid or book.mid)
-            action = decide_from_prob(p_up, ask, bid)
-            up_edge = p_up - ask
-            down_edge = (1.0 - p_up) - (1.0 - bid)
-            names = {0: "HOLD", 1: "BUY UP", 2: "BUY DOWN"}
+            spot = float(state.tape.mid.get(m["asset"]) or state.marks.get(m["asset"], {}).get("mark") or 0.0)
+            if m["cid"] not in state.opens and spot > 0:
+                state.opens[m["cid"]] = spot
+            strike = state.opens.get(m["cid"], spot)
+            mk = state.marks.get(m["asset"], {})
+            sig = ensemble_signal(
+                spot=spot or 1.0,
+                strike=strike or 1.0,
+                tau_sec=left,
+                vol=float(mk.get("vol_1s") or 1e-4),
+                ret_lead=float(mk.get("ret_8s") or 0.0),
+                stale_sec=4.0,
+                fusion_p=fusion_p,
+                ask=ask,
+                bid=bid,
+            )
+            action = sig.action
             card = {
                 "asset": m["asset"],
                 "cid": m["cid"],
@@ -148,11 +171,16 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
                 "mid": book.mid,
                 "bid": bid,
                 "ask": ask,
-                "bn": state.tape.mid.get(m["asset"], 0.0),
-                "p_up": p_up,
-                "up_edge": up_edge,
-                "down_edge": down_edge,
+                "bn": spot,
+                "p_up": sig.ensemble,
+                "fusion": sig.fusion,
+                "digital": sig.digital,
+                "lag": sig.lag,
+                "complement": sig.complement,
+                "up_edge": sig.ensemble - ask,
+                "down_edge": (1.0 - sig.ensemble) - (1.0 - bid),
                 "action": names[action],
+                "reason": sig.reason,
                 "tte_min": left / 60.0,
             }
             state.cards[m["asset"]] = card
@@ -169,7 +197,7 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
                     usd=state.size,
                     price=px,
                 )
-                state.note(f"{fill.venue} {side} {m['asset']} ${fill.usd:.2f} @ {px:.3f}")
+                state.note(f"{fill.venue} {side} {m['asset']} ${fill.usd:.2f} @ {px:.3f} · {sig.reason}")
             except Exception as exc:  # noqa: BLE001
                 state.note(f"order skipped: {exc}")
 

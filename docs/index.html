@@ -455,6 +455,23 @@
           in the simulator oracle, which uses true \(f_t\) instead of \(\hat p_t\).
         </p>
         <p class="src">cmf/policy.py · decide_from_prob</p>
+        <h3>8.1 Ensemble (desk)</h3>
+        <p>
+          The live desk does not trust one head. Every second it computes a
+          digital-option prior, the fusion \(\hat p\), and a lag tilt, then blends
+        </p>
+        <div class="eq">
+          \[
+            p = 0.45\,\Phi(d_2) + 0.35\,\hat p_{\mathrm{fusion}} + 0.20\,\tilde p_{\mathrm{lag}},
+            \quad
+            d_2 = \frac{\ln(S_t/S_0)-\tfrac12\sigma^2\tau}{\sigma\sqrt{\tau}}.
+          \]
+        </div>
+        <p>
+          A trade fires only if at least two heads agree with the blend, or if
+          \(a_{\mathrm{UP}} + a_{\mathrm{DOWN}} &lt; 1\) (complement arb).
+        </p>
+        <p class="src">cmf/quant.py · ensemble_signal · cmf/ingest.py</p>
         <div class="box remark">
           <p class="lbl">What this is not</p>
           <p>

@@ -15,8 +15,10 @@ function render(s) {
         <div class="row">binance <b>${Number(c.bn || 0).toFixed(2)}</b></div>
         <div class="row">pm mid <b>${Number(c.mid).toFixed(3)}</b></div>
         <div class="row">bid / ask <b>${Number(c.bid).toFixed(3)} / ${Number(c.ask).toFixed(3)}</b></div>
-        <div class="row">P(up) <b>${Number(c.p_up).toFixed(3)}</b></div>
+        <div class="row">ensemble <b>${Number(c.p_up).toFixed(3)}</b></div>
+        <div class="row">digital / fusion / lag <b>${Number(c.digital||0).toFixed(2)} / ${Number(c.fusion||0).toFixed(2)} / ${Number(c.lag||0).toFixed(2)}</b></div>
         <div class="row">up edge <b>${(100 * Number(c.up_edge)).toFixed(1)}¢</b></div>
+        <div class="row">yes+no ask <b>${Number(c.complement||0).toFixed(3)}</b></div>
         <div class="row">tte <b>${Number(c.tte_min).toFixed(1)}m</b></div>
         <div class="act">${c.action}</div>
       </article>`
