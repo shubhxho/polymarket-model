@@ -15,6 +15,7 @@ CMakeCache.txt
 *.o
 *.a
 .DS_Store
+data/
 logs/
 *_stats.npz
 # keep trained weights in the repo

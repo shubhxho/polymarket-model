@@ -15,6 +15,7 @@ from cmf.features import has_native
 from cmf.model import FusionModel
 from cmf.policy import decide_from_logit
 from cmf.ppo import FusionTrainer, LacunaTrainer, Pretrainer, Rollout, categorical_log_prob
+from cmf.dataset import bank_stats, load_windows
 from cmf.simulator import LagMarket, stack_obs
 
 console = Console()
@@ -251,6 +252,9 @@ def save_model(model: FusionModel, path: Path) -> None:
 def train(cfg: TrainConfig) -> dict:
     rng = _seed_everything(cfg.seed)
     cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    windows = load_windows()
+    LagMarket.path_bank = windows or None
+    console.print(f"real data: {bank_stats(windows)}")
     fusion = FusionModel(cfg)
     lacuna = LacunaModel(cfg)
     mx.eval(fusion.parameters(), lacuna.parameters())
@@ -333,6 +337,7 @@ def train(cfg: TrainConfig) -> dict:
     lacuna.save_weights(str(cfg.checkpoint_dir / "lacuna.safetensors"))
     summary = {
         "native": has_native(),
+        "real_windows": len(windows),
         "fusion_params": fusion.count_params(),
         "lacuna_params": lacuna.count_params(),
         "pretrain_loss": pre_losses[-1] if pre_losses else None,

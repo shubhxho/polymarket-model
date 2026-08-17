@@ -28,12 +28,12 @@ class TrainConfig(BaseModel):
     lag_min: float = 4.0
     lag_max: float = 14.0
 
-    pretrain_steps: int = 400
-    pretrain_batch: int = 64
+    pretrain_steps: int = 1600
+    pretrain_batch: int = 96
     pretrain_lr: float = 3e-4
 
-    ppo_updates: int = 40
-    rollout_envs: int = 16
+    ppo_updates: int = 80
+    rollout_envs: int = 24
     rollout_steps: int = 64
     ppo_epochs: int = 4
     ppo_batch: int = 128

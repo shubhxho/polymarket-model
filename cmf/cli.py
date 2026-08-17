@@ -13,9 +13,9 @@ console = Console()
 
 @app.command()
 def train(
-    pretrain_steps: int = typer.Option(400, help="Supervised pretrain steps on lag/expiry/oracle."),
-    ppo_updates: int = typer.Option(40, help="PPO updates after pretrain."),
-    eval_episodes: int = typer.Option(48, help="Held-out episodes per policy."),
+    pretrain_steps: int = typer.Option(1600, help="Supervised pretrain steps on lag/expiry/oracle."),
+    ppo_updates: int = typer.Option(80, help="PPO updates after pretrain."),
+    eval_episodes: int = typer.Option(64, help="Held-out episodes per policy."),
     seed: int = 7,
     checkpoint_dir: Path = Path("checkpoints"),
     dim: int = 96,
@@ -100,6 +100,15 @@ def desk(
             port=port,
         )
     )
+
+
+@app.command("fetch-data")
+def fetch_data(days: int = 45) -> None:
+    """Download Binance USDT-M 1m history and cut 15-minute windows."""
+    from cmf.dataset import bank_stats, download, load_windows
+
+    download(days=days)
+    console.print(bank_stats(load_windows()))
 
 
 @app.command()

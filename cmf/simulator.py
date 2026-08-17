@@ -34,6 +34,8 @@ class StepObs:
 
 
 class LagMarket:
+    path_bank: list | None = None
+
     """
     15-minute binary market whose CLOB lags a faster futures tape.
 
@@ -59,7 +61,11 @@ class LagMarket:
         self.size = self.cfg.trade_size
         self.hold_steps = 0
         self.true_lag = int(self.rng.integers(int(self.cfg.lag_min), int(self.cfg.lag_max) + 1))
-        self._simulate_paths()
+        bank = getattr(LagMarket, "path_bank", None)
+        if bank and self.rng.random() < 0.8:
+            self._finish_from_price(np.asarray(bank[int(self.rng.integers(0, len(bank)))], dtype=np.float64))
+        else:
+            self._simulate_paths()
         self.fast_feat, self.slow_feat, self.lag_feat = featurize_episode(self.fast_raw, self.slow_raw)
         self.resolved_up = float(self.bn_path[-1] > self.bn_open)
         return self._obs()
@@ -104,8 +110,34 @@ class LagMarket:
                 trades_qty[i] = float(rng.lognormal(2.2, 0.8) * n_tr)
                 s[i] *= np.exp(sign * 0.08 * sigma)
 
-        self.bn_open = float(s[0])
+        self._finish_from_price(s, trades_qty, trades_sign, jumps)
+
+    def _finish_from_price(
+        self,
+        s: np.ndarray,
+        trades_qty: np.ndarray | None = None,
+        trades_sign: np.ndarray | None = None,
+        jumps: np.ndarray | None = None,
+    ) -> None:
+        rng = self.rng
+        n = int(s.shape[0])
+        if n != self.full_ticks:
+            x = np.linspace(0.0, 1.0, n)
+            s = np.interp(np.linspace(0.0, 1.0, self.full_ticks), x, s)
+            n = self.full_ticks
+        if trades_qty is None:
+            trades_qty = np.zeros(n, dtype=np.float32)
+            trades_sign = np.zeros(n, dtype=np.float32)
+            jumps = np.zeros(n, dtype=np.float32)
+            for i in range(n):
+                if rng.random() < 0.2:
+                    trades_sign[i] = float(rng.choice([-1.0, 1.0]))
+                    trades_qty[i] = float(rng.lognormal(2.0, 0.7))
+        funding = float(rng.normal(0.0, 5e-5))
+        oi = float(rng.uniform(-0.04, 0.04))
+        basis = float(rng.normal(0.0, 4e-4))
         start = n - self.ticks
+        self.bn_open = float(s[0])
         self.bn_path = s[start:].astype(np.float32)
         self.bn_full = s
         rv = float(np.std(np.diff(s) / s[:-1]) * np.sqrt(900) + 1e-6)
