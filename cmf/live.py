@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Deque
 
+import os
+
 import aiohttp
 import numpy as np
 import websockets
@@ -138,6 +140,7 @@ async def fetch_15m_markets(assets: list[str]) -> list[dict]:
                 "asset": asset,
                 "cid": m.get("conditionId") or m.get("condition_id"),
                 "token_up": tokens[0],
+                "token_down": tokens[1],
                 "end": end,
             }
         )
@@ -177,7 +180,7 @@ def _raw_ticks(asset: str, tape: FuturesTape, book: LiveBook, tte: float, t: int
     return fast, slow
 
 
-async def _loop(load: Path, size: float, assets: list[str]) -> None:
+async def _loop(load: Path, size: float, assets: list[str], hub=None) -> None:
     import mlx.core as mx
 
     cfg = TrainConfig()
@@ -239,10 +242,20 @@ async def _loop(load: Path, size: float, assets: list[str]) -> None:
                 action = decide_from_prob(p_up, float(book.ask or book.mid), float(book.bid or book.mid))
                 names = {0: "HOLD", 1: "BUY UP", 2: "BUY DOWN"}
                 if action != 0:
-                    print(
-                        f"{now.strftime('%H:%M:%S')} {m['asset']:4} {names[action]:9} "
-                        f"mid={book.mid:.3f} p_up={p_up:.3f} tte={left/60:.1f}m size=${size:.0f}"
-                    )
+                    side = "UP" if action == 1 else "DOWN"
+                    token = m["token_up"] if side == "UP" else m.get("token_down", "")
+                    px = float(book.ask if side == "UP" else (1.0 - book.bid))
+                    if hub is not None:
+                        try:
+                            fill = hub.submit(asset=m["asset"], token_id=token, side=side, usd=size, price=px)
+                            print(f"{now.strftime('%H:%M:%S')} {fill.venue} {side} {m['asset']} ${fill.usd:.2f} @ {px:.3f}")
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"{now.strftime('%H:%M:%S')} skip {m['asset']}: {exc}")
+                    else:
+                        print(
+                            f"{now.strftime('%H:%M:%S')} {m['asset']:4} {names[action]:9} "
+                            f"mid={book.mid:.3f} p_up={p_up:.3f} tte={left/60:.1f}m size=${size:.0f}"
+                        )
     except KeyboardInterrupt:
         pass
     finally:
@@ -251,5 +264,19 @@ async def _loop(load: Path, size: float, assets: list[str]) -> None:
             t.cancel()
 
 
-def run_live(load: Path, size: float, assets: list[str]) -> None:
-    asyncio.run(_loop(load, size, assets))
+def run_live(
+    load: Path,
+    size: float,
+    assets: list[str],
+    live: bool = False,
+    confirm: str = "",
+) -> None:
+    hub = None
+    if live:
+        from cmf.broker import ExecutionHub, LiveBroker, PaperBroker
+
+        hub = ExecutionHub(paper=PaperBroker(start_cash=size), live=LiveBroker(max_usd=size, max_daily_loss=float(os.environ.get("CMF_MAX_DAILY_LOSS", "25"))))
+        hub.live.arm(confirm)
+        hub.mode = "live"
+        print(f"LIVE CLOB armed | {hub.live.address} | max ${size:.2f}")
+    asyncio.run(_loop(load, size, assets, hub=hub))

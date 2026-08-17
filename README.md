@@ -76,6 +76,30 @@ uv run cmf docs
 
 Then open [http://127.0.0.1:4173](http://127.0.0.1:4173). Hosted copy: [shubhxho.github.io/polymarket-model](https://shubhxho.github.io/polymarket-model/).
 
+## Execution desk (Polymarket CLOB V2)
+
+Paper is the default. Collateral on Polymarket is **pUSD** (USDC-backed on Polygon), not USDT.
+
+```bash
+uv sync --group trade
+cp .env.example .env   # set POLY_PRIVATE_KEY only if you want live
+uv run cmf desk --size 5 --cash 5
+```
+
+Desk: [http://127.0.0.1:4174](http://127.0.0.1:4174)
+
+```bash
+# paper on live books (no orders)
+uv run cmf live --size 5
+
+# real orders — also requires CMF_LIVE=1
+uv run cmf live --live --confirm I_UNDERSTAND_REAL_ORDERS --size 5
+```
+
+Arming live in the desk sends FAK market buys on CLOB V2. Caps: `CMF_MAX_USD`, `CMF_MAX_DAILY_LOSS`. Keys never go to the browser.
+
+Do not post this as “SOTA live PnL.” The honest line is: dual-stream fusion vs LACUNA, in-sim win, live CLOB wired, paper until armed.
+
 ## Layout
 
 ```

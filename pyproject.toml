@@ -25,6 +25,7 @@ cmf = "cmf.cli:app"
 
 [dependency-groups]
 dev = ["pytest>=8.3"]
+trade = ["py-clob-client-v2>=1.0"]
 
 [tool.uv]
 package = true

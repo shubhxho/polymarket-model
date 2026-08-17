@@ -61,13 +61,45 @@ def eval(
 @app.command("live")
 def live(
     load: Path = Path("checkpoints/fusion.safetensors"),
-    size: float = 50.0,
+    size: float = 5.0,
     assets: str = "BTC,ETH,SOL,XRP",
+    real: bool = typer.Option(False, "--live", help="Send real CLOB V2 orders. Requires CMF_LIVE=1 and a key."),
+    confirm: str = typer.Option("", help="Must be I_UNDERSTAND_REAL_ORDERS with --live."),
 ) -> None:
-    """Paper-trade live 15-minute markets with a saved fusion policy."""
+    """Run the fusion policy on live 15-minute books. Paper unless --live."""
     from cmf.live import run_live
 
-    run_live(load=load, size=size, assets=[a.strip().upper() for a in assets.split(",") if a.strip()])
+    run_live(
+        load=load,
+        size=size,
+        assets=[a.strip().upper() for a in assets.split(",") if a.strip()],
+        live=real,
+        confirm=confirm,
+    )
+
+
+@app.command()
+def desk(
+    load: Path = Path("checkpoints/fusion.safetensors"),
+    size: float = 5.0,
+    cash: float = 5.0,
+    port: int = 4174,
+    assets: str = "BTC,ETH,SOL,XRP",
+) -> None:
+    """Open the execution desk (paper by default)."""
+    import asyncio
+
+    from cmf.desk import run_desk
+
+    asyncio.run(
+        run_desk(
+            load=load,
+            size=size,
+            assets=[a.strip().upper() for a in assets.split(",") if a.strip()],
+            cash=cash,
+            port=port,
+        )
+    )
 
 
 @app.command()
