@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.18...3.30)
 project(cmf LANGUAGES CXX)
 
 if(NOT SKBUILD)
-  message(WARNING "Configure this project with pip/scikit-build-core, not raw CMake.")
+  message(WARNING "Configure with `uv sync`, not raw CMake.")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)

@@ -37,19 +37,32 @@ Same environment for every policy. Share-based PnL **after paying the bid/ask**.
 
 Fusion is more conservative than the oracle (higher win rate, smaller average PnL). The LACUNA clone, trained on the same simulator, overtrades and loses.
 
-## Install and train (Apple Silicon)
+## Is this SOTA?
+
+No. It is a stronger *implementation* than LACUNA on a **controlled lag simulator**. That is not state of the art for prediction-market making, binary-option pricing, or live Polymarket trading.
+
+What it is not:
+- Not compared to published LOB transformers, temporal fusion transformers, or calibrated market-making baselines on real fills
+- Not live out-of-sample; paper trading here still assumes you can hit the displayed bid/ask
+- Not a claim that 90% expiry accuracy transfers to production 15-minute markets
+- The lag oracle still beats the trained policy on PnL (+0.51 vs +0.04)
+
+What it *is*:
+- Better than a faithful LACUNA clone **on this simulator** (fusion +0.04 / Sharpe 0.58 vs clone −0.47 / Sharpe −7)
+- A modern stack (C++20 features, MLX 0.32 dual-stream attention, `P(up)` vs CLOB)
+
+If you need a one-line label: **SOTA vs LACUNA in-sim, not SOTA in the field.**
+
+## Install, train, test (uv only)
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-cmf train --pretrain-steps 400 --ppo-updates 40 --eval-episodes 64
+uv sync
+uv run pytest
+uv run cmf train --pretrain-steps 400 --ppo-updates 40 --eval-episodes 64
+uv run cmf live --load checkpoints/fusion.safetensors --size 50
 ```
 
-Weights land in `checkpoints/fusion.safetensors`. Paper-trade live 15-minute markets:
-
-```bash
-cmf live --load checkpoints/fusion.safetensors --size 50
-```
+`uv.lock` pins the tree. `uv sync` builds the C++ extension and the MLX env. Do not use pip.
 
 ## Layout
 
