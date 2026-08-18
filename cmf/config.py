@@ -13,9 +13,10 @@ class TrainConfig(BaseModel):
     lag_dim: int = 8
     n_actions: int = 3
 
-    dim: int = 96
-    heads: int = 4
-    layers: int = 3
+    # CMF-1 Large: ~28M params, ~110 MB F32. Old 96/3 card is `small`.
+    dim: int = 384
+    heads: int = 6
+    layers: int = 6
     dropout: float = 0.05
     lacuna_hidden: int = 64
     lacuna_critic_hidden: int = 96
@@ -28,15 +29,15 @@ class TrainConfig(BaseModel):
     lag_min: float = 4.0
     lag_max: float = 14.0
 
-    pretrain_steps: int = 1600
-    pretrain_batch: int = 96
-    pretrain_lr: float = 3e-4
+    pretrain_steps: int = 500
+    pretrain_batch: int = 24
+    pretrain_lr: float = 2e-4
 
-    ppo_updates: int = 80
-    rollout_envs: int = 24
-    rollout_steps: int = 64
-    ppo_epochs: int = 4
-    ppo_batch: int = 128
+    ppo_updates: int = 24
+    rollout_envs: int = 8
+    rollout_steps: int = 48
+    ppo_epochs: int = 3
+    ppo_batch: int = 32
     ppo_lr: float = 2.5e-4
     gamma: float = 0.97
     gae_lambda: float = 0.95

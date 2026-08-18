@@ -244,9 +244,11 @@ def evaluate(cfg: TrainConfig, kind: str, model, n: int, rng: np.random.Generato
     }
 
 
-def save_model(model: FusionModel, path: Path) -> None:
+def save_model(model: FusionModel, path: Path, cfg: TrainConfig | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     model.save_weights(str(path))
+    if cfg is not None:
+        (path.parent / "model.json").write_text(cfg.model_dump_json(indent=2))
 
 
 def train(cfg: TrainConfig) -> dict:
@@ -332,8 +334,9 @@ def train(cfg: TrainConfig) -> dict:
         )
     console.print(table)
 
-    ckpt = cfg.checkpoint_dir / "fusion.safetensors"
-    save_model(fusion, ckpt)
+    from cmf.io import save_bundle
+
+    ckpt = save_bundle(fusion, cfg, cfg.checkpoint_dir)
     lacuna.save_weights(str(cfg.checkpoint_dir / "lacuna.safetensors"))
     summary = {
         "native": has_native(),

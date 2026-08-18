@@ -13,13 +13,14 @@ console = Console()
 
 @app.command()
 def train(
-    pretrain_steps: int = typer.Option(1600, help="Supervised pretrain steps on lag/expiry/oracle."),
-    ppo_updates: int = typer.Option(80, help="PPO updates after pretrain."),
+    pretrain_steps: int = typer.Option(500, help="Supervised pretrain steps on lag/expiry/oracle."),
+    ppo_updates: int = typer.Option(24, help="PPO updates after pretrain."),
     eval_episodes: int = typer.Option(64, help="Held-out episodes per policy."),
     seed: int = 7,
     checkpoint_dir: Path = Path("checkpoints"),
-    dim: int = 96,
-    layers: int = 3,
+    dim: int = 384,
+    layers: int = 6,
+    heads: int = 6,
 ) -> None:
     """Pretrain the fusion transformer, then PPO-train it against a LACUNA clone."""
     from cmf.train import train as run
@@ -32,6 +33,7 @@ def train(
         checkpoint_dir=checkpoint_dir,
         dim=dim,
         layers=layers,
+        heads=heads,
     )
     run(cfg)
 
@@ -49,8 +51,12 @@ def eval(
     from cmf.train import evaluate
 
     cfg = TrainConfig(eval_episodes=episodes, seed=seed)
-    model = FusionModel(cfg)
-    model.load_weights(str(load))
+    from cmf.io import load_bundle
+
+    model, loaded = load_bundle(load)
+    cfg = loaded
+    cfg.eval_episodes = episodes
+    cfg.seed = seed
     mx.eval(model.parameters())
     import numpy as np
 

@@ -1,8 +1,9 @@
-# CMF-1 0.9M
+# CMF-1 29M
 
 Model card: [shubhxho.github.io/polymarket-model](https://shubhxho.github.io/polymarket-model/)
+Lab (hacking / sim): [shubhxho.github.io/polymarket-model/lab.html](https://shubhxho.github.io/polymarket-model/lab.html)
 
-A 939k-parameter dual-stream model for Polymarket 15-minute crypto binaries. Fast tape is Binance. Slow tape is the CLOB. Three heads: digital-option prior, fusion transformer, lag tilt.
+29.1M parameters, 111 MB SafeTensors, architecture in `checkpoints/model.json`. Fast tape is Binance. Slow tape is the CLOB. Three heads plus a user routine bank (`/routines`).
 
 # Cross-market fusion
 

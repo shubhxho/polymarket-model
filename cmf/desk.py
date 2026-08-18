@@ -17,6 +17,8 @@ from cmf.live import FuturesTape, LiveBook, PolymarketBooks, _raw_ticks, fetch_1
 from cmf.ingest import binance_marks
 from cmf.model import FusionModel
 from cmf.quant import ensemble_signal
+from cmf.routines import RoutineBank
+from cmf.routines.base import Ctx
 
 DOCS = Path(__file__).resolve().parents[1] / "docs"
 
@@ -45,14 +47,17 @@ class DeskState:
         self.load = load
         self._model: FusionModel | None = None
         self._mx = None
+        self.routines = RoutineBank()
 
     def load_model(self) -> None:
         import mlx.core as mx
 
-        cfg = TrainConfig()
-        model = FusionModel(cfg)
-        if self.load.exists():
-            model.load_weights(str(self.load))
+        from cmf.io import load_bundle
+
+        if self.load.exists() or (self.load.parent / "model.json").exists():
+            model, _cfg = load_bundle(self.load if self.load.suffix else self.load.parent)
+        else:
+            model = FusionModel(TrainConfig())
         model.eval()
         mx.eval(model.parameters())
         self._model = model
@@ -89,6 +94,7 @@ class DeskState:
                 for f in self.hub.fills[-40:]
             ],
             "log": self.log[-40:],
+            "routines": self.routines.list(),
         }
 
     def note(self, msg: str) -> None:
@@ -163,7 +169,31 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
                 ask=ask,
                 bid=bid,
             )
-            action = sig.action
+            now_utc = datetime.now(timezone.utc)
+            p_adj, rvotes = self.routines.apply(
+                Ctx(
+                    asset=m["asset"],
+                    p_ens=sig.ensemble,
+                    p_digital=sig.digital,
+                    p_fusion=sig.fusion,
+                    ask=ask,
+                    bid=bid,
+                    tte_sec=left,
+                    utc_hour=now_utc.hour,
+                    utc_minute=now_utc.minute,
+                    weekday=now_utc.weekday(),
+                ),
+                sig.ensemble,
+            )
+            if any(v.veto for v in rvotes):
+                action = 0
+            else:
+                from cmf.policy import decide_from_prob
+
+                action = decide_from_prob(p_adj, ask, bid)
+                if sig.action == 0 and action != 0 and sig.complement >= 0.992:
+                    # still require two model heads unless complement-arb
+                    action = sig.action
             card = {
                 "asset": m["asset"],
                 "cid": m["cid"],
@@ -172,7 +202,8 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
                 "bid": bid,
                 "ask": ask,
                 "bn": spot,
-                "p_up": sig.ensemble,
+                "p_up": p_adj,
+                "p_raw": sig.ensemble,
                 "fusion": sig.fusion,
                 "digital": sig.digital,
                 "lag": sig.lag,
@@ -181,6 +212,7 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
                 "down_edge": (1.0 - sig.ensemble) - (1.0 - bid),
                 "action": names[action],
                 "reason": sig.reason,
+                "routines": [{"name": v.name, "delta": v.delta, "note": v.note} for v in rvotes],
                 "tte_min": left / 60.0,
             }
             state.cards[m["asset"]] = card
@@ -221,6 +253,11 @@ def make_app(state: DeskState) -> web.Application:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
         return web.json_response({"ok": True, **state.snapshot()})
 
+    async def api_routines(req: web.Request) -> web.Response:
+        body = await req.json()
+        state.routines.set(str(body.get("name", "")), bool(body.get("enabled", True)))
+        return web.json_response(state.snapshot())
+
     async def api_paper(_req: web.Request) -> web.Response:
         state.hub.live.disarm()
         state.hub.mode = "paper"
@@ -236,6 +273,7 @@ def make_app(state: DeskState) -> web.Application:
     app.router.add_get("/api/state", api_state)
     app.router.add_post("/api/arm", api_arm)
     app.router.add_post("/api/paper", api_paper)
+    app.router.add_post("/api/routines", api_routines)
     return app
 
 

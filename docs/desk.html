@@ -3,43 +3,45 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CMF desk — Polymarket execution</title>
+  <title>CMF desk · Polymarket 15m</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&family=Spectral:ital,wght@1,400;1,500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./desk.css" />
 </head>
 <body>
   <header class="top">
-    <div class="word">two-tape desk</div>
+    <a class="word" href="./">CMF-1</a>
+    <div class="tabs">
+      <span>15m crypto</span>
+      <span class="mute">BTC · ETH · SOL · XRP</span>
+    </div>
     <div id="badge" class="badge">PAPER</div>
   </header>
-  <div class="grid">
-    <section class="col">
-      <div class="cards" id="cards"></div>
-    </section>
-    <aside class="col">
-      <div class="warn">
-        Polymarket collateral is <b>pUSD</b> (USDC-backed on Polygon), not USDT.
-        Paper is default. Live sends real CLOB V2 orders only after you arm it.
-        In-sim this beats a LACUNA clone. That is not a live profit claim.
-      </div>
-      <div class="fund">
-        <h3>Wallet</h3>
-        <div class="row">cash (paper) <b id="cash">—</b></div>
-        <div class="row">max ticket <b id="max">—</b></div>
+  <div class="board">
+    <section class="mkts" id="cards"></section>
+    <aside>
+      <div class="panel">
+        <h3>Ticket</h3>
+        <div class="row">cash <b id="cash">—</b></div>
+        <div class="row">size <b id="max">—</b></div>
         <div class="row">sdk <b id="sdk">—</b></div>
         <div class="addr" id="addr">no live key</div>
-        <p class="row">Fund: wrap USDC.e → pUSD on Polygon, or send USDC to Polymarket and let the UI wrap. Set <code>POLY_PRIVATE_KEY</code> and <code>CMF_LIVE=1</code>.</p>
+        <p class="hint">pUSD on Polygon, not USDT. Paper until armed.</p>
         <div class="btns">
           <button type="button" id="paper">paper</button>
           <button type="button" class="danger" id="arm">arm live</button>
         </div>
       </div>
-      <div class="fills">
+      <div class="panel">
+        <h3>Routines</h3>
+        <p class="hint">Built-in US RTH plus anything in <code>/routines</code>.</p>
+        <div id="routines"></div>
+      </div>
+      <div class="panel">
         <h3>Fills</h3>
         <div class="log" id="fills"></div>
       </div>
-      <div class="fills">
+      <div class="panel">
         <h3>Log</h3>
         <div class="log" id="log"></div>
       </div>

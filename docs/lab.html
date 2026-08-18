@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CMF-1 lab · hacking phase</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,450&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./model.css" />
+  <style>
+    .lab { display: grid; grid-template-columns: 18rem 1fr; gap: 0; border-top: 1px solid var(--line); min-height: 70vh; }
+    .ctrls { padding: 1.2rem 1.3rem; border-right: 1px solid var(--line); font-family: var(--sans); font-size: 0.82rem; }
+    .ctrls label { display: block; margin: 0.7rem 0 0.2rem; color: var(--mute); }
+    .ctrls input[type=range] { width: 100%; }
+    .ctrls button { margin-top: 1rem; width: 100%; padding: 0.55rem; border: 1px solid var(--ink); background: var(--ink); color: var(--paper); cursor: pointer; font: inherit; }
+    .stage { padding: 1.2rem 1.4rem 2rem; }
+    canvas { width: 100%; height: 220px; background: var(--panel); border: 1px solid var(--line); }
+    .nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.8rem; margin: 1rem 0; }
+    .nums b { display: block; font-size: 1.4rem; font-weight: 450; }
+    .nums span { font-family: var(--sans); font-size: 0.75rem; color: var(--mute); }
+    @media (max-width: 800px) { .lab { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <a href="./">CMF-1</a>
+    <nav>
+      <a href="./">Card</a>
+      <a href="./lab.html">Lab</a>
+      <a href="./desk.html">Desk</a>
+      <a href="./notes.html">Notes</a>
+      <a href="https://github.com/shubhxho/polymarket-model">GitHub</a>
+    </nav>
+  </header>
+  <section class="hero" style="padding-bottom:1.5rem">
+    <p class="avail">Hacking phase</p>
+    <h1>Simulate the book.</h1>
+    <p class="lede">Same heads as production: digital Φ(d₂), lag tilt, complement arb, US RTH routine. Runs in the page. The 111&nbsp;MB net still trains on MLX locally.</p>
+  </section>
+  <div class="lab">
+    <aside class="ctrls">
+      <label>episodes <b id="ev">400</b></label>
+      <input id="episodes" type="range" min="50" max="2000" value="400" />
+      <label>lag τ (seconds) <b id="lv">8</b></label>
+      <input id="lag" type="range" min="1" max="20" value="8" />
+      <label>vol (bps / √s) <b id="vv">4</b></label>
+      <input id="vol" type="range" min="1" max="20" value="4" />
+      <label>enter (¢) <b id="en">4.0</b></label>
+      <input id="enter" type="range" min="10" max="120" value="40" />
+      <label><input id="usrth" type="checkbox" checked /> US RTH haircut</label>
+      <button type="button" id="run">run batch</button>
+    </aside>
+    <div class="stage">
+      <div class="nums">
+        <div><b id="pnl">—</b><span>mean stake-units</span></div>
+        <div><b id="sh">—</b><span>sharpe</span></div>
+        <div><b id="wr">—</b><span>win rate</span></div>
+        <div><b id="tr">—</b><span>trades / ep</span></div>
+      </div>
+      <canvas id="eq" width="900" height="220"></canvas>
+      <p class="fine">Equity of one batch. Slow tape is delayed digital fair. Not the 29M net — that is SafeTensors on disk.</p>
+    </div>
+  </div>
+  <script src="./lab.js"></script>
+</body>
+</html>
