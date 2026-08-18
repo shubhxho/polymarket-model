@@ -318,6 +318,8 @@ class LagMarket:
             "next_ret": float(np.clip(self.next_ret[self.t] * 80.0, -1, 1)),
             "lag": float(self.true_lag_norm[self.t]),
             "oracle": float(self.oracle_action()),
+            "ask": float(self.ask[self.t]),
+            "bid": float(self.bid[self.t]),
         }
 
     def step(self, action: int) -> tuple[StepObs, float, bool, dict]:

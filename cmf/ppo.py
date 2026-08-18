@@ -28,6 +28,29 @@ def entropy_from_logits(logits: mx.array) -> mx.array:
     return -mx.sum(p * logp, axis=-1)
 
 
+def trading_utility(logit: mx.array, y: mx.array, ask: mx.array, bid: mx.array, enter: float = 0.045) -> mx.array:
+    """Soft expected PnL of buying UP / DOWN vs the displayed book (Gneiting-style)."""
+    p = mx.sigmoid(logit)
+    w_up = mx.sigmoid((p - ask - enter) / 0.015)
+    w_dn = mx.sigmoid(((1.0 - p) - (1.0 - bid) - enter) / 0.015)
+    pnl = w_up * (y - ask) + w_dn * ((1.0 - y) - (1.0 - bid))
+    return mx.mean(pnl) - 0.02 * mx.mean(w_up * w_dn)
+
+
+def expiry_aux(out, batch, cfg: TrainConfig) -> mx.array:
+    bce_i = nn.losses.binary_cross_entropy(out.p_up, batch["p_up"], with_logits=True, reduction="none")
+    bce = mx.mean(bce_i)
+    p = mx.sigmoid(out.p_up)
+    brier = mx.mean((p - batch["p_up"]) ** 2)
+    ret = mx.mean((out.next_ret - batch["next_ret"]) ** 2)
+    lag = mx.mean((out.lag - batch["lag_y"]) ** 2)
+    unc = mx.mean(mx.exp(-out.log_var) * bce_i + out.log_var)
+    aux = bce + ret + lag + cfg.brier_coef * brier + cfg.unc_coef * unc
+    if "ask" in batch and "bid" in batch:
+        aux = aux - cfg.utility_coef * trading_utility(out.p_up, batch["p_up"], batch["ask"], batch["bid"])
+    return aux
+
+
 def gae(
     rewards: np.ndarray,
     values: np.ndarray,
@@ -66,6 +89,8 @@ class Rollout:
     next_ret: np.ndarray
     lag_y: np.ndarray
     oracle: np.ndarray
+    ask: np.ndarray
+    bid: np.ndarray
 
 
 class FusionTrainer:
@@ -73,7 +98,9 @@ class FusionTrainer:
         self.cfg = cfg
         self.model = model
         mx.eval(self.model.parameters())
-        decay = optim.cosine_decay(cfg.ppo_lr, cfg.ppo_updates * cfg.ppo_epochs * 4, end=cfg.ppo_lr * 0.1)
+        decay = optim.cosine_decay(
+            cfg.ppo_lr, max(cfg.ppo_updates * cfg.ppo_epochs * 4, 1), end=cfg.ppo_lr * 0.1
+        )
         self.opt = optim.AdamW(learning_rate=decay, weight_decay=cfg.weight_decay)
         self._loss_and_grad = nn.value_and_grad(self.model, self._loss)
 
@@ -113,11 +140,7 @@ class FusionTrainer:
         )
         v_loss = 0.5 * mx.mean(mx.maximum((out.value - batch["ret"]) ** 2, (v_clip - batch["ret"]) ** 2))
         ent = mx.mean(entropy_from_logits(out.logits))
-        aux = (
-            mx.mean(nn.losses.binary_cross_entropy(out.p_up, batch["p_up"], with_logits=True))
-            + mx.mean((out.next_ret - batch["next_ret"]) ** 2)
-            + mx.mean((out.lag - batch["lag_y"]) ** 2)
-        )
+        aux = expiry_aux(out, batch, self.cfg)
         oracle = batch["oracle"]
         bc = -mx.mean(categorical_log_prob(out.logits, oracle))
         return (
@@ -160,6 +183,8 @@ class FusionTrainer:
                     "next_ret": _as_mx(roll.next_ret[idx]),
                     "lag_y": _as_mx(roll.lag_y[idx]),
                     "oracle": _as_mx(roll.oracle[idx].astype(np.int32)),
+                    "ask": _as_mx(roll.ask[idx]),
+                    "bid": _as_mx(roll.bid[idx]),
                 }
                 loss, grads = self._loss_and_grad(self.model, batch)
                 grads, _ = optim.clip_grad_norm(grads, self.cfg.max_grad_norm)
@@ -189,12 +214,8 @@ class Pretrainer:
 
     def _loss(self, model: FusionModel, batch: dict) -> mx.array:
         out = model(batch["fast"], batch["slow"], batch["pos"], batch["lag"])
-        bce = mx.mean(nn.losses.binary_cross_entropy(out.p_up, batch["p_up"], with_logits=True))
-        ret = mx.mean((out.next_ret - batch["next_ret"]) ** 2)
-        lag = mx.mean((out.lag - batch["lag_y"]) ** 2)
         logp = categorical_log_prob(out.logits, batch["oracle"])
-        bc = -mx.mean(logp)
-        return bce + ret + lag + 1.15 * bc
+        return expiry_aux(out, batch, self.cfg) + 1.15 * (-mx.mean(logp))
 
     def step(self, batch: dict[str, np.ndarray]) -> dict[str, float]:
         mx_batch = {k: _as_mx(v) if k != "oracle" else mx.array(v.astype(np.int32)) for k, v in batch.items()}

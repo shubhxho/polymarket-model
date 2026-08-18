@@ -1,4 +1,4 @@
-"""Load/save CMF-1 as SafeTensors + model.json only."""
+"""Load/save CMF-2 as SafeTensors + model.json only."""
 
 from __future__ import annotations
 

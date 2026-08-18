@@ -237,9 +237,16 @@ async def _loop(load: Path, size: float, assets: list[str], hub=None) -> None:
                 pos[0, 5] = left / 900.0
                 lag = lg[t][None, ...]
                 out = model(mx.array(fast_w), mx.array(slow_w), mx.array(pos), mx.array(lag))
-                mx.eval(out.logits, out.p_up)
+                mx.eval(out.logits, out.p_up, out.uncertainty)
                 p_up = float(1.0 / (1.0 + np.exp(-float(np.array(out.p_up)[0]))))
-                action = decide_from_prob(p_up, float(book.ask or book.mid), float(book.bid or book.mid))
+                unc = float(np.array(out.uncertainty)[0])
+                action = decide_from_prob(
+                    p_up,
+                    float(book.ask or book.mid),
+                    float(book.bid or book.mid),
+                    uncertainty=unc,
+                    tte=left / 900.0,
+                )
                 names = {0: "HOLD", 1: "BUY UP", 2: "BUY DOWN"}
                 if action != 0:
                     side = "UP" if action == 1 else "DOWN"

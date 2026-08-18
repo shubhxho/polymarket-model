@@ -21,6 +21,35 @@ from cmf.simulator import LagMarket, stack_obs
 console = Console()
 
 
+def _calibrate_temperature(model: FusionModel, envs: list[LagMarket], n: int = 192) -> float:
+    """Grid-search a scalar temperature on held-out frames (Guo et al.)."""
+    model.eval()
+    batch = _collect_pretrain_batch(envs, n)
+    out = model(
+        mx.array(batch["fast"]),
+        mx.array(batch["slow"]),
+        mx.array(batch["pos"]),
+        mx.array(batch["lag"]),
+    )
+    mx.eval(out.p_up)
+    logit = np.array(out.p_up, dtype=np.float64)
+    y = batch["p_up"].astype(np.float64)
+    best_t, best = 1.0, 1e9
+    for t in np.linspace(0.5, 2.5, 21):
+        p = 1.0 / (1.0 + np.exp(-np.clip(logit / t, -20, 20)))
+        nll = -np.mean(y * np.log(p + 1e-8) + (1.0 - y) * np.log(1.0 - p + 1e-8))
+        if nll < best:
+            best, best_t = nll, float(t)
+    old = float(np.array(mx.clip(mx.logaddexp(model.log_temp, 0.0) + 0.35, 0.25, 3.0)).reshape(-1)[0])
+    target = float(np.clip(old * best_t, 0.25, 3.0))
+    s = max(target - 0.35, 1e-4)
+    model.log_temp = mx.array(np.array([np.log(np.expm1(s))], dtype=np.float32))
+    mx.eval(model.log_temp)
+    model.train()
+    console.print(f"temperature {old:.3f} → {target:.3f}  (nll {best:.4f} on {n} frames)")
+    return target
+
+
 def _seed_everything(seed: int) -> np.random.Generator:
     np.random.seed(seed)
     mx.random.seed(seed)
@@ -33,7 +62,7 @@ def _make_envs(cfg: TrainConfig, n: int, rng: np.random.Generator) -> list[LagMa
 
 def _collect_pretrain_batch(envs: list[LagMarket], batch: int) -> dict[str, np.ndarray]:
     """Take several labeled frames from each reset instead of one reset per row."""
-    obs, p_up, nxt, lag, oracle = [], [], [], [], []
+    obs, p_up, nxt, lag, oracle, ask, bid = [], [], [], [], [], [], []
     env_i = 0
     while len(obs) < batch:
         env = envs[env_i % len(envs)]
@@ -59,6 +88,8 @@ def _collect_pretrain_batch(envs: list[LagMarket], batch: int) -> dict[str, np.n
             nxt.append(info["next_ret"])
             lag.append(info["lag"])
             oracle.append(action)
+            ask.append(info["ask"])
+            bid.append(info["bid"])
             if len(obs) >= batch:
                 break
     packed = stack_obs(obs[:batch])
@@ -66,6 +97,8 @@ def _collect_pretrain_batch(envs: list[LagMarket], batch: int) -> dict[str, np.n
     packed["next_ret"] = np.asarray(nxt[:batch], dtype=np.float32)
     packed["lag_y"] = np.asarray(lag[:batch], dtype=np.float32)
     packed["oracle"] = np.asarray(oracle[:batch], dtype=np.int32)
+    packed["ask"] = np.asarray(ask[:batch], dtype=np.float32)
+    packed["bid"] = np.asarray(bid[:batch], dtype=np.float32)
     return packed
 
 
@@ -73,6 +106,7 @@ def _rollout_fusion(cfg: TrainConfig, trainer: FusionTrainer, envs: list[LagMark
     buf = {k: [] for k in (
         "fast", "slow", "pos", "lag", "lacuna", "lacuna_hist",
         "actions", "logp", "values", "rewards", "dones", "p_up", "next_ret", "lag_y", "oracle",
+        "ask", "bid",
     )}
     states = [e.reset() for e in envs]
     ep_pnls: list[float] = []
@@ -80,12 +114,20 @@ def _rollout_fusion(cfg: TrainConfig, trainer: FusionTrainer, envs: list[LagMark
     for _ in range(cfg.rollout_steps):
         packed = stack_obs(states)
         out = trainer.forward(packed)
-        mx.eval(out.logits, out.value, out.p_up)
+        mx.eval(out.logits, out.value, out.p_up, out.uncertainty)
         logits = np.array(out.p_up)
+        uncs = np.array(out.uncertainty)
         values = np.array(out.value).astype(np.float32)
         actions = np.zeros(len(envs), dtype=np.int32)
         for i, env in enumerate(envs):
-            actions[i] = decide_from_logit(float(logits[i]), states[i].ask, states[i].bid, env.side)
+            actions[i] = decide_from_logit(
+                float(logits[i]),
+                states[i].ask,
+                states[i].bid,
+                env.side,
+                uncertainty=float(uncs[i]),
+                tte=float(states[i].pos[5]),
+            )
         logp = np.array(categorical_log_prob(out.logits, mx.array(actions))).astype(np.float32)
         nxt_states = []
         for i, env in enumerate(envs):
@@ -107,6 +149,8 @@ def _rollout_fusion(cfg: TrainConfig, trainer: FusionTrainer, envs: list[LagMark
             buf["next_ret"].append(info["next_ret"])
             buf["lag_y"].append(info["lag"])
             buf["oracle"].append(oracle_a)
+            buf["ask"].append(states[i].ask)
+            buf["bid"].append(states[i].bid)
             if done:
                 ep_pnls.append(running[i])
                 running[i] = 0.0
@@ -129,6 +173,8 @@ def _rollout_fusion(cfg: TrainConfig, trainer: FusionTrainer, envs: list[LagMark
         next_ret=np.asarray(buf["next_ret"], dtype=np.float32),
         lag_y=np.asarray(buf["lag_y"], dtype=np.float32),
         oracle=np.asarray(buf["oracle"], dtype=np.int32),
+        ask=np.asarray(buf["ask"], dtype=np.float32),
+        bid=np.asarray(buf["bid"], dtype=np.float32),
     )
     mean_pnl = float(np.mean(ep_pnls)) if ep_pnls else float(np.mean(roll.rewards) * cfg.episode_ticks)
     return roll, mean_pnl
@@ -138,6 +184,7 @@ def _rollout_lacuna(cfg: TrainConfig, trainer: LacunaTrainer, envs: list[LagMark
     buf = {k: [] for k in (
         "fast", "slow", "pos", "lag", "lacuna", "lacuna_hist",
         "actions", "logp", "values", "rewards", "dones", "p_up", "next_ret", "lag_y", "oracle",
+        "ask", "bid",
     )}
     states = [e.reset() for e in envs]
     ep_pnls: list[float] = []
@@ -165,6 +212,8 @@ def _rollout_lacuna(cfg: TrainConfig, trainer: LacunaTrainer, envs: list[LagMark
             buf["next_ret"].append(info["next_ret"])
             buf["lag_y"].append(info["lag"])
             buf["oracle"].append(oracle_a)
+            buf["ask"].append(states[i].ask)
+            buf["bid"].append(states[i].bid)
             if done:
                 ep_pnls.append(running[i])
                 running[i] = 0.0
@@ -187,6 +236,8 @@ def _rollout_lacuna(cfg: TrainConfig, trainer: LacunaTrainer, envs: list[LagMark
         next_ret=np.asarray(buf["next_ret"], dtype=np.float32),
         lag_y=np.asarray(buf["lag_y"], dtype=np.float32),
         oracle=np.asarray(buf["oracle"], dtype=np.int32),
+        ask=np.asarray(buf["ask"], dtype=np.float32),
+        bid=np.asarray(buf["bid"], dtype=np.float32),
     )
     mean_pnl = float(np.mean(ep_pnls)) if ep_pnls else float(np.mean(roll.rewards) * cfg.episode_ticks)
     return roll, mean_pnl
@@ -208,9 +259,12 @@ def evaluate(cfg: TrainConfig, kind: str, model, n: int, rng: np.random.Generato
             if kind == "fusion":
                 out = model(mx.array(packed["fast"]), mx.array(packed["slow"]),
                             mx.array(packed["pos"]), mx.array(packed["lag"]))
-                mx.eval(out.logits, out.p_up)
+                mx.eval(out.logits, out.p_up, out.uncertainty)
                 logit = float(np.array(out.p_up)[0])
-                action = decide_from_logit(logit, obs.ask, obs.bid, env.side)
+                unc = float(np.array(out.uncertainty)[0])
+                action = decide_from_logit(
+                    logit, obs.ask, obs.bid, env.side, uncertainty=unc, tte=float(obs.pos[5])
+                )
                 p_up_hit.append(float((logit > 0) == (env.resolved_up > 0.5)))
             elif kind == "lacuna":
                 out = model(mx.array(packed["lacuna"]), mx.array(packed["lacuna_hist"]))
@@ -278,13 +332,18 @@ def train(cfg: TrainConfig) -> dict:
         if step == 0 or (step + 1) % 50 == 0 or step + 1 == cfg.pretrain_steps:
             console.print(f"pretrain {step + 1:>4}/{cfg.pretrain_steps}  loss={stats['pretrain_loss']:.4f}")
     console.print(f"pretrain done in {time.time() - t0:.1f}s  last_loss={pre_losses[-1]:.4f}")
-
-    f_trainer = FusionTrainer(cfg, fusion)
-    l_trainer = LacunaTrainer(cfg, lacuna)
-    f_envs = _make_envs(cfg, cfg.rollout_envs, rng)
-    l_envs = _make_envs(cfg, cfg.rollout_envs, rng)
+    save_model(fusion, cfg.checkpoint_dir / "fusion.safetensors", cfg)
+    _calibrate_temperature(fusion, pre_envs, n=192)
+    save_model(fusion, cfg.checkpoint_dir / "fusion.safetensors", cfg)
 
     history = []
+    if cfg.ppo_updates <= 0:
+        console.print("ppo skipped (decision is P(up) vs the book; actor PPO is optional)")
+    else:
+        f_trainer = FusionTrainer(cfg, fusion)
+        l_trainer = LacunaTrainer(cfg, lacuna)
+        f_envs = _make_envs(cfg, cfg.rollout_envs, rng)
+        l_envs = _make_envs(cfg, cfg.rollout_envs, rng)
     for upd in range(cfg.ppo_updates):
         f_roll, f_pnl = _rollout_fusion(cfg, f_trainer, f_envs)
         l_roll, l_pnl = _rollout_lacuna(cfg, l_trainer, l_envs)
@@ -305,12 +364,11 @@ def train(cfg: TrainConfig) -> dict:
             f"lacuna loss={l_stats['loss']:.3f} pnl={l_pnl:+.2f}"
         )
 
-    eval_rng = np.random.default_rng(cfg.seed + 999)
     results = {
-        "fusion": evaluate(cfg, "fusion", fusion, cfg.eval_episodes, eval_rng),
-        "lacuna": evaluate(cfg, "lacuna", lacuna, cfg.eval_episodes, eval_rng),
-        "oracle": evaluate(cfg, "oracle", None, cfg.eval_episodes, eval_rng),
-        "random": evaluate(cfg, "random", None, cfg.eval_episodes, eval_rng),
+        "fusion": evaluate(cfg, "fusion", fusion, cfg.eval_episodes, np.random.default_rng(cfg.seed + 999)),
+        "lacuna": evaluate(cfg, "lacuna", lacuna, cfg.eval_episodes, np.random.default_rng(cfg.seed + 999)),
+        "oracle": evaluate(cfg, "oracle", None, cfg.eval_episodes, np.random.default_rng(cfg.seed + 999)),
+        "random": evaluate(cfg, "random", None, cfg.eval_episodes, np.random.default_rng(cfg.seed + 999)),
     }
 
     table = Table(title=f"held-out eval ({cfg.eval_episodes} episodes)")

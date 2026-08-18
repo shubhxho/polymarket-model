@@ -1,141 +1,36 @@
 {
   "native": true,
   "real_windows": 17280,
-  "fusion_params": 29090311,
-  "lacuna_params": 38756,
-  "pretrain_loss": 0.42459046840667725,
+  "fusion_params": 50515313,
+  "pretrain_loss": 0.8801,
+  "temperature_nll": 0.1106,
   "results": {
     "fusion": {
-      "pnl": -0.09073089872988306,
-      "pnl_std": 0.41864280324488606,
-      "win_rate": 0.5625,
-      "trades_per_ep": 1.5,
-      "sharpe": -1.2259889667332573,
-      "p_up_acc": 0.9142400568181818
-    },
-    "lacuna": {
-      "pnl": -0.29930115610089253,
-      "pnl_std": 1.931021540242695,
-      "win_rate": 0.34375,
-      "trades_per_ep": 2.0,
-      "sharpe": -0.8767913628693184,
-      "p_up_acc": NaN
+      "pnl": 1.0141872496011985,
+      "pnl_std": 3.5776354868816314,
+      "win_rate": 0.265625,
+      "trades_per_ep": 0.921875,
+      "sharpe": 2.2678380745834907,
+      "p_up_acc": 0.8924893465909091
     },
     "oracle": {
-      "pnl": 2.139774649070625,
-      "pnl_std": 5.216156899768906,
-      "win_rate": 0.34375,
-      "trades_per_ep": 1.25,
-      "sharpe": 2.320557745086602,
+      "pnl": 1.7187107228673848,
+      "pnl_std": 4.10382864103251,
+      "win_rate": 0.234375,
+      "trades_per_ep": 0.75,
+      "sharpe": 3.3504531870451517,
       "p_up_acc": NaN
     },
     "random": {
-      "pnl": -7.358256542970058,
-      "pnl_std": 1.628536599114456,
+      "pnl": -7.491877773985278,
+      "pnl_std": 1.4243091012361915,
       "win_rate": 0.0,
-      "trades_per_ep": 60.90625,
-      "sharpe": -25.559502046803452,
+      "trades_per_ep": 60.984375,
+      "sharpe": -42.08006655231125,
       "p_up_acc": NaN
     }
   },
-  "history": [
-    {
-      "update": 1,
-      "fusion_loss": 0.23011048262317976,
-      "fusion_kl": 0.058743768061200775,
-      "fusion_pnl": 0.0,
-      "lacuna_loss": -0.17304253578186035,
-      "lacuna_pnl": -12.787971496582031
-    },
-    {
-      "update": 2,
-      "fusion_loss": -0.04878614743211074,
-      "fusion_kl": 0.042032014578580856,
-      "fusion_pnl": 0.0,
-      "lacuna_loss": -0.045040205121040344,
-      "lacuna_pnl": -11.216154098510742
-    },
-    {
-      "update": 3,
-      "fusion_loss": 0.0754320686974097,
-      "fusion_kl": 0.019302668670813244,
-      "fusion_pnl": 0.0,
-      "lacuna_loss": 0.048040762543678284,
-      "lacuna_pnl": -5.863087177276611
-    },
-    {
-      "update": 4,
-      "fusion_loss": 44.78180104957169,
-      "fusion_kl": -0.035971864644024104,
-      "fusion_pnl": -0.20062097907066345,
-      "lacuna_loss": -0.006366724148392677,
-      "lacuna_pnl": -6.440017223358154
-    },
-    {
-      "update": 5,
-      "fusion_loss": 0.32196030393242836,
-      "fusion_kl": 0.07360738391677539,
-      "fusion_pnl": 0.0,
-      "lacuna_loss": 0.0021015815436840057,
-      "lacuna_pnl": -3.1347272396087646
-    },
-    {
-      "update": 6,
-      "fusion_loss": 0.5801294452200333,
-      "fusion_kl": 0.02315299730334017,
-      "fusion_pnl": 0.0,
-      "lacuna_loss": 0.3879031836986542,
-      "lacuna_pnl": -4.612223148345947
-    },
-    {
-      "update": 7,
-      "fusion_loss": 0.3240412237743537,
-      "fusion_kl": 0.043632750709851585,
-      "fusion_pnl": 0.0,
-      "lacuna_loss": -0.064215749502182,
-      "lacuna_pnl": -2.85680890083313
-    },
-    {
-      "update": 8,
-      "fusion_loss": 0.3101094874242942,
-      "fusion_kl": 0.07175491874416669,
-      "fusion_pnl": 0.043925922363996506,
-      "lacuna_loss": 0.1329461634159088,
-      "lacuna_pnl": -1.1720640659332275
-    },
-    {
-      "update": 9,
-      "fusion_loss": 0.25654306386907894,
-      "fusion_kl": 0.050282987455526985,
-      "fusion_pnl": 0.0,
-      "lacuna_loss": -0.015438681468367577,
-      "lacuna_pnl": -1.2021024227142334
-    },
-    {
-      "update": 10,
-      "fusion_loss": 0.5125093162059784,
-      "fusion_kl": 0.06491809027890365,
-      "fusion_pnl": 0.0,
-      "lacuna_loss": -0.07366108894348145,
-      "lacuna_pnl": -0.6616102457046509
-    },
-    {
-      "update": 11,
-      "fusion_loss": 0.8256018509467443,
-      "fusion_kl": -0.6208119297193156,
-      "fusion_pnl": -0.2742362320423126,
-      "lacuna_loss": -0.06300521641969681,
-      "lacuna_pnl": -0.3028152287006378
-    },
-    {
-      "update": 12,
-      "fusion_loss": 0.14567333822035128,
-      "fusion_kl": -0.19546478034721482,
-      "fusion_pnl": 0.0,
-      "lacuna_loss": 0.18247386813163757,
-      "lacuna_pnl": -0.14809508621692657
-    }
-  ],
+  "history": [],
   "config": {
     "history": 64,
     "fast_dim": 24,
@@ -144,9 +39,11 @@
     "lag_dim": 8,
     "n_actions": 3,
     "dim": 384,
-    "heads": 6,
-    "layers": 6,
-    "dropout": 0.05,
+    "heads": 8,
+    "layers": 7,
+    "coarse_layers": 2,
+    "layer_scale": 0.01,
+    "dropout": 0.08,
     "lacuna_hidden": 64,
     "lacuna_critic_hidden": 96,
     "lacuna_history": 5,
@@ -156,10 +53,13 @@
     "max_spread": 0.04,
     "lag_min": 4.0,
     "lag_max": 14.0,
-    "pretrain_steps": 250,
+    "pretrain_steps": 800,
     "pretrain_batch": 24,
-    "pretrain_lr": 0.0002,
-    "ppo_updates": 12,
+    "pretrain_lr": 0.00015,
+    "utility_coef": 0.55,
+    "brier_coef": 0.45,
+    "unc_coef": 0.12,
+    "ppo_updates": 0,
     "rollout_envs": 8,
     "rollout_steps": 48,
     "ppo_epochs": 3,
@@ -174,8 +74,9 @@
     "max_grad_norm": 1.0,
     "target_kl": 0.03,
     "weight_decay": 0.02,
-    "eval_episodes": 32,
+    "eval_episodes": 64,
     "seed": 7,
     "checkpoint_dir": "checkpoints"
-  }
+  },
+  "note": "CMF-2 pretrain 800 + temperature scale. PPO skipped."
 }

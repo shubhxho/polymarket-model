@@ -19,7 +19,7 @@
   </div>
   <div class="shell">
     <nav class="toc" aria-label="Contents">
-      <p class="brand"><a href="./">CMF-1 0.9M</a></p>
+      <p class="brand"><a href="./">CMF-2</a></p>
       <p class="meta">A notation book for the model in this repository. Every symbol maps to code.</p>
       <a class="ch" href="#front">Front matter</a>
       <a href="#ch1">1. The lag thesis</a>
@@ -317,8 +317,10 @@
         <p>
           Fast tokens \(x_{1:H}\in\mathbb{R}^{H\times 24}\), slow tokens
           \(y_{1:H}\in\mathbb{R}^{H\times 16}\), position \(u\in\mathbb{R}^{8}\),
-          lag features \(\ell\in\mathbb{R}^{8}\). Width \(d=96\), \(4\) heads,
-          \(3\) blocks. About \(9.4\times 10^5\) parameters.
+          lag features \(\ell\in\mathbb{R}^{8}\). Width \(d=384\), \(8\) heads,
+          \(7\) fine blocks plus \(2\) coarse blocks on a \(4\)-tick pool.
+          Per-tick feature gates, QK-norm, ALiBi, pad masks, LayerScale, and
+          FiLM from \([u;\ell]\) (time-to-expiry, inventory, Hayashi–Yoshida).
         </p>
 
         <h3>6.1 RMSNorm, RoPE, SwiGLU</h3>
@@ -349,28 +351,31 @@
         </div>
         <p>
           Each block does self-attention on each stream, then cross-attention
-          both ways, then SwiGLU. The lag channel is slow queries, fast keys:
+          both ways, then SwiGLU. Queries and keys are RMS-normalized before
+          RoPE. The lag channel is slow queries, fast keys:
         </p>
         <div class="eq">
           \[
-            y \leftarrow y + \mathrm{Attn}(y, x, x).
+            y \leftarrow y + \gamma\odot\mathrm{Attn}(y, x, x).
           \]
         </div>
         <p>
-          Streams are pooled by a one-layer attention pool, then gated:
+          A \(4\)-tick mean-pool path runs two extra blocks and adds back.
+          Each stream is pooled by a learned query mixed with the last valid
+          tick, then gated:
         </p>
         <div class="eq">
           \[
           \begin{aligned}
-            z_c &= W_c[u;\ell], \\
+            z_c &= \mathrm{MLP}([u;\ell]), \\
             g &= \sigma\bigl(W_g[z_x; z_y; z_c]\bigr), \\
             z &= \mathrm{RMS}\bigl(g \odot z_x + (1-g)\odot z_y + z_c\bigr).
           \end{aligned}
           \]
         </div>
         <p>
-          Heads: policy logits in \(\mathbb{R}^{3}\), value scalar, expiry logit,
-          next-return, lag scalar.
+          Heads: policy logits in \(\mathbb{R}^{3}\), value scalar, temperature-scaled
+          expiry logit, next-return, lag, and a heteroscedastic \(\log\sigma^2\).
         </p>
         <p class="src">cmf/model.py · DualStreamBlock, FusionModel.encode</p>
       </section>
@@ -390,9 +395,11 @@
           \]
         </div>
         <p>
-          with \(a^{\star}\) the oracle that buys when unlagged \(f_t\) clears the
-          offer by \(4.5\) cents. The sum used in code is
-          \(\mathcal{L}_{\mathrm{bce}} + \mathcal{L}_{\mathrm{ret}} + \mathcal{L}_{\tau} + 1.15\,\mathcal{L}_{\mathrm{bc}}\).
+          plus a Brier term on \(\sigma(\hat\ell_t)\), a heteroscedastic
+          \(\mathrm{e}^{-\log\sigma^2}\mathcal{L}_{\mathrm{bce}}+\log\sigma^2\),
+          and a soft book-utility
+          \(-\mathbb{E}[w^{\uparrow}(y-a)+w^{\downarrow}((1-y)-(1-b))]\)
+          with \(w=\sigma((\mathrm{edge}-0.045)/0.015)\).
           Hold frames are downsampled so behavioural cloning does not collapse to
           \(\mathrm{HOLD}\).
         </p>
@@ -439,20 +446,28 @@
           \end{aligned}
           \]
         </div>
-        <p>Flat:</p>
+        <p>
+          The hurdle widens with the uncertainty head \(u_t\in(0,1)\) and as
+          time-to-expiry \(t_e\) collapses (the lag is worth less near settlement):
+        </p>
+        <div class="eq">
+          \[
+            \theta_t = 0.045\,(1+1.6 u_t)\,(1+0.85(1-t_e)).
+          \]
+        </div>
         <div class="eq">
           \[
             a_t =
             \begin{cases}
-              \mathrm{BUY}  & e^{\uparrow}_t > 0.045, \\
-              \mathrm{SELL} & e^{\downarrow}_t > 0.045, \\
+              \mathrm{BUY}  & e^{\uparrow}_t > \theta_t, \\
+              \mathrm{SELL} & e^{\downarrow}_t > \theta_t, \\
               \mathrm{HOLD} & \text{otherwise.}
             \end{cases}
           \]
         </div>
         <p>
-          In a position the flip threshold is \(0.10\). The same constants appear
-          in the simulator oracle, which uses true \(f_t\) instead of \(\hat p_t\).
+          In a position the flip threshold is \(0.10\,(1+0.8 u_t)\). The oracle
+          still uses a flat \(4.5\) cent hurdle on true \(f_t\).
         </p>
         <p class="src">cmf/policy.py · decide_from_prob</p>
         <h3>8.1 Ensemble (desk)</h3>
@@ -476,9 +491,8 @@
           <p class="lbl">What this is not</p>
           <p>
             Clearing a 4.5 cent edge on a planted delay is not a live Sharpe.
-            On the held-out simulator the rule made \(+0.04\) units of stake
-            (Sharpe \(0.58\)) against a LACUNA clone at \(-0.47\). The oracle
-            that sees \(f_t\) still leads at \(+0.51\).
+            On 64 held-out episodes CMF-2 made \(+1.01\) units of stake
+            (Sharpe \(2.27\)) against the unlagged oracle at \(+1.72\).
           </p>
         </div>
       </section>
@@ -504,7 +518,7 @@
             <tr><td>\(\lambda^\pm\)</td><td>Hawkes buy/sell intensity</td><td><code>hawkes_buy/sell</code></td></tr>
             <tr><td>VPIN</td><td>Bucketed informed-flow proxy</td><td><code>vpin</code></td></tr>
             <tr><td>\(\rho(k)\)</td><td>Lagged Pearson of returns</td><td><code>lagged_corr</code></td></tr>
-            <tr><td>\(H, d\)</td><td>History 64, width 96</td><td><code>history, dim</code></td></tr>
+            <tr><td>\(H, d\)</td><td>History 64, width 384</td><td><code>history, dim</code></td></tr>
             <tr><td>\(\gamma, \lambda_{\mathrm{GAE}}\)</td><td>0.97, 0.95</td><td><code>gamma, gae_lambda</code></td></tr>
             <tr><td>\(e^{\uparrow}, e^{\downarrow}\)</td><td>Edges vs offer</td><td><code>up_edge, down_edge</code></td></tr>
           </tbody>
@@ -523,6 +537,10 @@
           Su et al. (2021). RoFormer.
           Shazeer (2020). GLU variants improve transformer.
           Zhang, Sennrich (2019). Root mean square layer normalization.
+          Press et al. (2021). Train short, test long: ALiBi.
+          Lim et al. (2021). Temporal fusion transformers.
+          Henry et al. (2020). Query-key normalization for transformers.
+          Gneiting, Raftery (2007). Strictly proper scoring rules.
           HumanPlane (2025). LACUNA / cross-market-state-fusion.
         </p>
       </section>

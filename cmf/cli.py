@@ -13,14 +13,14 @@ console = Console()
 
 @app.command()
 def train(
-    pretrain_steps: int = typer.Option(500, help="Supervised pretrain steps on lag/expiry/oracle."),
-    ppo_updates: int = typer.Option(24, help="PPO updates after pretrain."),
+    pretrain_steps: int = typer.Option(800, help="Supervised pretrain steps on lag/expiry/oracle."),
+    ppo_updates: int = typer.Option(0, help="PPO updates after pretrain. 0 skips PPO (recommended)."),
     eval_episodes: int = typer.Option(64, help="Held-out episodes per policy."),
     seed: int = 7,
     checkpoint_dir: Path = Path("checkpoints"),
     dim: int = 384,
-    layers: int = 6,
-    heads: int = 6,
+    layers: int = 7,
+    heads: int = 8,
 ) -> None:
     """Pretrain the fusion transformer, then PPO-train it against a LACUNA clone."""
     from cmf.train import train as run

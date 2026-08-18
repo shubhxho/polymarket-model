@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CMF-1 29M · Cross-Market Fusion</title>
-  <meta name="description" content="A 29.1M-parameter dual-stream model for Polymarket 15-minute crypto binaries. SafeTensors + model.json. 111 MB F32." />
+  <title>CMF-2 · Cross-Market Fusion</title>
+  <meta name="description" content="CMF-2 dual-stream model for Polymarket 15-minute crypto binaries. QK-norm, FiLM, multi-scale, decision-aware training." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,450&display=swap" rel="stylesheet" />
@@ -26,9 +26,9 @@
 
   <section class="hero">
     <p class="avail">Available now</p>
-    <h1>CMF-1 29M</h1>
+    <h1>CMF-2</h1>
     <p class="lede">
-      A 29,090,311-parameter dual-stream model in a 111&nbsp;MB SafeTensors file, paired with <code>model.json</code>. Trained on 17,280 real 15-minute Binance windows plus a lagged CLOB. Hacking phase lives in the lab.
+      Dual-stream lag reader: QK-norm attention, FiLM from time-to-expiry, multi-scale tokens, and a Brier + book-utility objective. Trained on real 15-minute Binance windows plus a lagged CLOB. Hacking phase lives in the lab.
     </p>
   </section>
 
@@ -42,8 +42,8 @@
       or when yes+no asks sum under a dollar.
     </p>
     <div class="specs">
-      <div class="spec"><span>Parameters</span><b>29.1M</b></div>
-      <div class="spec"><span>Download</span><b>111 MB</b></div>
+      <div class="spec"><span>Parameters</span><b>50.5M</b></div>
+      <div class="spec"><span>Width</span><b>384 / 8 / 7+2</b></div>
       <div class="spec"><span>Streams</span><b>2 × 64</b></div>
       <div class="spec"><span>Heads</span><b>3 + arb</b></div>
     </div>
@@ -56,9 +56,9 @@
       Held-out simulator, share-based PnL after paying the bid/ask. Real futures paths for 80% of episodes (45 days, BTC/ETH/SOL/XRP). Not live Polymarket PnL.
     </p>
     <div class="stats">
-      <div class="stat"><b>91.4%</b><span>P(resolve UP) on 32 held-out episodes</span></div>
-      <div class="stat"><b>−0.09</b><span>vs LACUNA −0.30 (same book)</span></div>
-      <div class="stat"><b>111 MB</b><span>F32 SafeTensors + model.json</span></div>
+      <div class="stat"><b>+1.01</b><span>mean PnL vs oracle +1.72 (64 held-out)</span></div>
+      <div class="stat"><b>2.27</b><span>Sharpe after paying the bid/ask</span></div>
+      <div class="stat"><b>89.2%</b><span>P(resolve UP) on the same book</span></div>
     </div>
     <div class="tapes" aria-hidden="true">
       <div class="lane" id="fast"></div>
@@ -88,7 +88,7 @@ $ uv run cmf desk --size 5</pre>
   </section>
 
   <footer>
-    Cross-Market Fusion · CMF-1 0.9M · measured in-sim, not a live profit claim.
+    Cross-Market Fusion · CMF-2 · measured in-sim, not a live profit claim.
   </footer>
   <script>
     const fast = [12,18,16,22,28,24,31,40,36,44,52,48,55,62,58,70,66,74,80,76];

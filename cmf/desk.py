@@ -149,8 +149,9 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
                 mx.array(pos),
                 mx.array(lg[t][None, ...]),
             )
-            mx.eval(out.p_up)
+            mx.eval(out.p_up, out.uncertainty)
             fusion_p = float(1.0 / (1.0 + np.exp(-float(np.array(out.p_up)[0]))))
+            fusion_unc = float(np.array(out.uncertainty)[0])
             ask = float(book.ask or book.mid)
             bid = float(book.bid or book.mid)
             spot = float(state.tape.mid.get(m["asset"]) or state.marks.get(m["asset"], {}).get("mark") or 0.0)
@@ -190,7 +191,9 @@ async def engine_loop(state: DeskState, stop: asyncio.Event) -> None:
             else:
                 from cmf.policy import decide_from_prob
 
-                action = decide_from_prob(p_adj, ask, bid)
+                action = decide_from_prob(
+                    p_adj, ask, bid, uncertainty=fusion_unc, tte=left / 900.0
+                )
                 if sig.action == 0 and action != 0 and sig.complement >= 0.992:
                     # still require two model heads unless complement-arb
                     action = sig.action

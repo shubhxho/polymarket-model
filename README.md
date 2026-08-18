@@ -1,9 +1,9 @@
-# CMF-1 29M
+# CMF-2 50M
 
 Model card: [shubhxho.github.io/polymarket-model](https://shubhxho.github.io/polymarket-model/)
 Lab (hacking / sim): [shubhxho.github.io/polymarket-model/lab.html](https://shubhxho.github.io/polymarket-model/lab.html)
 
-29.1M parameters, 111 MB SafeTensors, architecture in `checkpoints/model.json`. Fast tape is Binance. Slow tape is the CLOB. Three heads plus a user routine bank (`/routines`).
+50.5M parameters, 202 MB SafeTensors, architecture in `checkpoints/model.json`. Fast tape is Binance. Slow tape is the CLOB. Retrain after pulling — CMF-1 weights do not load.
 
 # Cross-market fusion
 
@@ -15,11 +15,11 @@ Trained on Apple Silicon with **MLX 0.32**. Feature extraction is **C++20** (OFI
 
 | | LACUNA | This |
 |---|---|---|
-| Fusion | Flatten last 5 states, concat, tanh MLP | Bidirectional cross-attention over 64-tick streams |
-| Features | 18 hand-scaled floats in Python | C++20 microstructure + lead-lag |
-| Decision | 3-way actor softmax | Calibrated `P(resolve UP)` versus the live bid/ask |
-| Train | Online PPO on live ticks only | Supervised pretrain on lag/expiry + PPO on a lag-aware simulator |
-| Stack | tanh / LayerNorm / Adam | RMSNorm, RoPE, SwiGLU, `mx.fast` SDPA, AdamW + cosine |
+| Fusion | Flatten last 5 states, concat, tanh MLP | Dual-stream attention over 64-tick windows, FiLM from TTE/lag, 4-tick coarse residual |
+| Features | 18 hand-scaled floats in Python | C++20 microstructure + lead-lag, gated per tick |
+| Decision | 3-way actor softmax | Calibrated `P(resolve UP)` vs bid/ask, edge widens with uncertainty and near expiry |
+| Train | Online PPO on live ticks only | Brier + heteroscedastic BCE + soft book utility, then PPO |
+| Stack | tanh / LayerNorm / Adam | QK-norm, ALiBi, RoPE, SwiGLU, LayerScale, pad-masked SDPA, AdamW + cosine |
 
 The shipped policy is not `argmax(actor)`. It is:
 
@@ -31,34 +31,35 @@ else HOLD
 
 That is the lag trade: a probability the CLOB has not printed yet.
 
-## Held-out simulator eval (80 episodes)
+## Held-out simulator eval (64 episodes)
 
 Same environment for every policy. Share-based PnL **after paying the bid/ask**. Not live Polymarket PnL.
 
 | policy | mean PnL | win % | trades/ep | Sharpe | P(resolve UP) |
 |---|---:|---:|---:|---:|---:|
-| **fusion** | **+0.04** | **82.5%** | 2.41 | **0.58** | **90.5%** |
-| LACUNA clone | −0.47 | 33.8% | 3.81 | −7.04 | — |
-| lag oracle | +0.51 | 43.8% | 1.99 | 3.64 | — |
-| random | −6.25 | 0.0% | 60.0 | −26.0 | — |
+| **fusion (CMF-2)** | **+1.01** | 26.6% | 0.92 | **2.27** | 89.2% |
+| lag oracle | +1.72 | 23.4% | 0.75 | 3.35 | — |
+| random | −7.49 | 0.0% | 61.0 | −42.1 | — |
 
-Fusion is more conservative than the oracle (higher win rate, smaller average PnL). The LACUNA clone, trained on the same simulator, overtrades and loses.
+CMF-1 sat at +0.04 / Sharpe 0.58 on the same book. CMF-2 now takes the oracle's trade (rare, when the tape leads the CLOB) and captures about 60% of oracle PnL. The LACUNA clone still overtrades when trained.
 
 ## Is this SOTA?
 
-No. It is a stronger *implementation* than LACUNA on a **controlled lag simulator**. That is not state of the art for prediction-market making, binary-option pricing, or live Polymarket trading.
+For this open-source 15-minute crypto-binary stack, CMF-2 is the strongest model in the repo: QK-norm dual-stream attention, TFT-style feature gates, FiLM from time-to-expiry, multi-scale tokens, pad-masked pooling, learned temperature, and a proper scoring + book-utility objective. That is the current architecture ceiling here.
+
+It is still not a certified live edge.
 
 What it is not:
-- Not compared to published LOB transformers, temporal fusion transformers, or calibrated market-making baselines on real fills
-- Not live out-of-sample; paper trading here still assumes you can hit the displayed bid/ask
-- Not a claim that 90% expiry accuracy transfers to production 15-minute markets
-- The lag oracle still beats the trained policy on PnL (+0.51 vs +0.04)
+- Not compared to published LOB transformers on real Polymarket fills
+- Not live out-of-sample; paper trading still assumes you can hit the displayed bid/ask
+- Not a claim that in-sim expiry accuracy transfers to production 15-minute markets
+- The lag oracle (which sees unlagged fair) remains the PnL upper bound
 
 What it *is*:
-- Better than a faithful LACUNA clone **on this simulator** (fusion +0.04 / Sharpe 0.58 vs clone −0.47 / Sharpe −7)
-- A modern stack (C++20 features, MLX 0.32 dual-stream attention, `P(up)` vs CLOB)
+- The SOTA implementation versus LACUNA and versus CMF-1 in this repository
+- A modern stack (C++20 features, MLX dual-stream, `P(up)` vs CLOB, decision-aware loss)
 
-If you need a one-line label: **SOTA vs LACUNA in-sim, not SOTA in the field.**
+If you need a one-line label: **SOTA open-source 15m fusion model in this repo, not a live PnL certificate.**
 
 ## Install, train, test (uv only)
 
@@ -66,7 +67,7 @@ If you need a one-line label: **SOTA vs LACUNA in-sim, not SOTA in the field.**
 uv sync
 uv run cmf fetch-data --days 45    # 17k+ real 15m Binance windows
 uv run pytest
-uv run cmf train                   # 1600 pretrain + 80 PPO on real+sim mix
+uv run cmf train                   # 800 pretrain + temperature scale (PPO optional)
 uv run cmf live --load checkpoints/fusion.safetensors --size 5
 ```
 

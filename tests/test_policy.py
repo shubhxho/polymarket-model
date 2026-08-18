@@ -17,6 +17,16 @@ def test_hold_inside_spread():
     assert decide_from_prob(0.50, ask=0.52, bid=0.48) == HOLD
 
 
+def test_uncertainty_widens_enter():
+    assert decide_from_prob(0.68, ask=0.62, bid=0.60) == BUY
+    assert decide_from_prob(0.68, ask=0.62, bid=0.60, uncertainty=0.9) == HOLD
+
+
+def test_late_tte_widens_enter():
+    assert decide_from_prob(0.68, ask=0.62, bid=0.60, tte=1.0) == BUY
+    assert decide_from_prob(0.68, ask=0.62, bid=0.60, tte=0.0) == HOLD
+
+
 def test_round_trip_pays_spread():
     env = LagMarket(TrainConfig(episode_ticks=120), np.random.default_rng(1))
     env.reset()

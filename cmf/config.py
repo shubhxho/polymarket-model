@@ -13,11 +13,13 @@ class TrainConfig(BaseModel):
     lag_dim: int = 8
     n_actions: int = 3
 
-    # CMF-1 Large: ~28M params, ~110 MB F32. Old 96/3 card is `small`.
+    # CMF-2: QK-norm + FiLM + multi-scale, ~35M F32. CMF-1 was 384/6/6.
     dim: int = 384
-    heads: int = 6
-    layers: int = 6
-    dropout: float = 0.05
+    heads: int = 8
+    layers: int = 7
+    coarse_layers: int = 2
+    layer_scale: float = 1e-2
+    dropout: float = 0.08
     lacuna_hidden: int = 64
     lacuna_critic_hidden: int = 96
     lacuna_history: int = 5
@@ -29,11 +31,17 @@ class TrainConfig(BaseModel):
     lag_min: float = 4.0
     lag_max: float = 14.0
 
-    pretrain_steps: int = 500
+    pretrain_steps: int = 800
     pretrain_batch: int = 24
-    pretrain_lr: float = 2e-4
+    pretrain_lr: float = 1.5e-4
 
-    ppo_updates: int = 24
+    utility_coef: float = 0.55
+    brier_coef: float = 0.45
+    unc_coef: float = 0.12
+
+    # 0 = skip PPO. The live rule is P(up) vs the book; PPO on the 3-way
+    # actor has previously exploded and erased a calibrated expiry head.
+    ppo_updates: int = 0
     rollout_envs: int = 8
     rollout_steps: int = 48
     ppo_epochs: int = 3
