@@ -47,6 +47,8 @@ class LagMarket:
     def __init__(self, cfg: TrainConfig, rng: np.random.Generator):
         self.cfg = cfg
         self.rng = rng
+        self.bank: list | None = None
+        self.real_mix: float = 0.8
         self.ticks = cfg.episode_ticks
         self.history = cfg.history
         self.full_ticks = 900
@@ -61,8 +63,9 @@ class LagMarket:
         self.size = self.cfg.trade_size
         self.hold_steps = 0
         self.true_lag = int(self.rng.integers(int(self.cfg.lag_min), int(self.cfg.lag_max) + 1))
-        bank = getattr(LagMarket, "path_bank", None)
-        if bank and self.rng.random() < 0.8:
+        bank = self.bank if getattr(self, "bank", None) is not None else getattr(LagMarket, "path_bank", None)
+        mix = float(getattr(self, "real_mix", 0.8))
+        if bank and self.rng.random() < mix:
             self._finish_from_price(np.asarray(bank[int(self.rng.integers(0, len(bank)))], dtype=np.float64))
         else:
             self._simulate_paths()

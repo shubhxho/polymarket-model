@@ -203,13 +203,47 @@ class FusionTrainer:
         return {"loss": float(np.mean(metrics["loss"])), "kl": float(np.mean(metrics["kl"]))}
 
 
+class EMA:
+    def __init__(self, model: FusionModel, decay: float = 0.999):
+        from mlx.utils import tree_map
+
+        self.decay = decay
+        self.shadow = tree_map(lambda x: mx.array(x), model.parameters())
+        mx.eval(self.shadow)
+
+    def update(self, model: FusionModel) -> None:
+        from mlx.utils import tree_map
+
+        d = self.decay
+        self.shadow = tree_map(lambda e, p: d * e + (1.0 - d) * p, self.shadow, model.parameters())
+        mx.eval(self.shadow)
+
+    def copy_to(self, model: FusionModel) -> None:
+        model.update(self.shadow)
+        mx.eval(model.parameters())
+
+
+def _lr_schedule(lr: float, steps: int, warmup: int):
+    steps = max(int(steps), 1)
+    warmup = max(min(int(warmup), steps - 1), 0)
+    if warmup <= 0:
+        return optim.cosine_decay(lr, steps, end=lr * 0.08)
+    warm = optim.linear_schedule(lr * 0.05, lr, warmup)
+    decay = optim.cosine_decay(lr, max(steps - warmup, 1), end=lr * 0.08)
+    return optim.join_schedules([warm, decay], [warmup])
+
+
 class Pretrainer:
-    def __init__(self, cfg: TrainConfig, model: FusionModel):
+    def __init__(self, cfg: TrainConfig, model: FusionModel, lr: float | None = None, steps: int | None = None):
         self.cfg = cfg
         self.model = model
         mx.eval(self.model.parameters())
-        decay = optim.cosine_decay(cfg.pretrain_lr, max(cfg.pretrain_steps, 1), end=cfg.pretrain_lr * 0.15)
-        self.opt = optim.AdamW(learning_rate=decay, weight_decay=cfg.weight_decay)
+        n = max(steps if steps is not None else cfg.pretrain_steps, 1)
+        rate = lr if lr is not None else cfg.pretrain_lr
+        self.opt = optim.AdamW(
+            learning_rate=_lr_schedule(rate, n, cfg.warmup_steps if lr is None else max(cfg.warmup_steps // 4, 40)),
+            weight_decay=cfg.weight_decay,
+        )
         self._step = nn.value_and_grad(self.model, self._loss)
 
     def _loss(self, model: FusionModel, batch: dict) -> mx.array:

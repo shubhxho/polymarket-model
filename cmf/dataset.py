@@ -61,20 +61,50 @@ def upsample_15m(closes_1m: np.ndarray) -> np.ndarray:
     return np.interp(xi, x, closes_1m).astype(np.float64)
 
 
-def load_windows(min_bars: int = 15) -> list[np.ndarray]:
-    """Every non-overlapping 15-minute slice across all cached assets."""
+def _windows_from_closes(closes: np.ndarray, min_bars: int, stride: int) -> list[np.ndarray]:
+    windows: list[np.ndarray] = []
+    n = (len(closes) // min_bars) * min_bars
+    for i in range(0, n - min_bars + 1, stride):
+        sl = closes[i : i + min_bars]
+        if sl.min() <= 0 or not np.isfinite(sl).all():
+            continue
+        windows.append(upsample_15m(sl))
+    return windows
+
+
+def load_windows(min_bars: int = 15, stride: int | None = None) -> list[np.ndarray]:
+    """15-minute slices across cached assets. Default stride is non-overlapping."""
     windows: list[np.ndarray] = []
     if not DATA.exists():
         return windows
+    step = stride if stride is not None else min_bars
+    for path in sorted(DATA.glob("*_1m.npy")):
+        windows.extend(_windows_from_closes(np.load(path), min_bars, step))
+    return windows
+
+
+def load_splits(
+    min_bars: int = 15,
+    train_frac: float = 0.70,
+    val_frac: float = 0.15,
+    train_stride: int = 5,
+) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
+    """Chronological train/val/test per asset. Train uses a denser stride."""
+    train, val, test = [], [], []
+    if not DATA.exists():
+        return train, val, test
     for path in sorted(DATA.glob("*_1m.npy")):
         closes = np.load(path)
-        n = (len(closes) // min_bars) * min_bars
-        for i in range(0, n - min_bars + 1, min_bars):
-            sl = closes[i : i + min_bars]
-            if sl.min() <= 0 or not np.isfinite(sl).all():
-                continue
-            windows.append(upsample_15m(sl))
-    return windows
+        held = _windows_from_closes(closes, min_bars, min_bars)
+        n = len(held)
+        a = int(n * train_frac)
+        b = int(n * (train_frac + val_frac))
+        val.extend(held[a:b])
+        test.extend(held[b:])
+        # denser train slices only on the train time span
+        t_end = a * min_bars
+        train.extend(_windows_from_closes(closes[: max(t_end, min_bars)], min_bars, train_stride))
+    return train, val, test
 
 
 def bank_stats(windows: list[np.ndarray]) -> str:

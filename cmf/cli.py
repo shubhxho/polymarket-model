@@ -13,19 +13,21 @@ console = Console()
 
 @app.command()
 def train(
-    pretrain_steps: int = typer.Option(800, help="Supervised pretrain steps on lag/expiry/oracle."),
+    hours: float = typer.Option(3.5, help="Wall-clock MLX budget. 3.5 is the full run; 0.08 is a 5-minute indication."),
+    pretrain_steps: int = typer.Option(12_000, help="Max supervised steps (wall clock may stop earlier)."),
     ppo_updates: int = typer.Option(0, help="PPO updates after pretrain. 0 skips PPO (recommended)."),
-    eval_episodes: int = typer.Option(64, help="Held-out episodes per policy."),
+    eval_episodes: int = typer.Option(80, help="Held-out episodes per policy."),
     seed: int = 7,
     checkpoint_dir: Path = Path("checkpoints"),
     dim: int = 384,
     layers: int = 7,
     heads: int = 8,
 ) -> None:
-    """Pretrain the fusion transformer, then PPO-train it against a LACUNA clone."""
+    """Tight CMF-2 train: chronological split, EMA, val, utility fine-tune, temperature scale."""
     from cmf.train import train as run
 
     cfg = TrainConfig(
+        train_hours=hours,
         pretrain_steps=pretrain_steps,
         ppo_updates=ppo_updates,
         eval_episodes=eval_episodes,
@@ -35,6 +37,13 @@ def train(
         layers=layers,
         heads=heads,
     )
+    if hours <= 0.15:
+        cfg.pretrain_batch = min(cfg.pretrain_batch, 24)
+        cfg.val_every = 100
+        cfg.val_frames = 96
+        cfg.finetune_steps = 80
+        cfg.warmup_steps = 40
+        cfg.eval_episodes = min(eval_episodes, 12)
     run(cfg)
 
 

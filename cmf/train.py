@@ -14,8 +14,8 @@ from cmf.config import TrainConfig
 from cmf.features import has_native
 from cmf.model import FusionModel
 from cmf.policy import decide_from_logit
-from cmf.ppo import FusionTrainer, LacunaTrainer, Pretrainer, Rollout, categorical_log_prob
-from cmf.dataset import bank_stats, load_windows
+from cmf.ppo import EMA, FusionTrainer, LacunaTrainer, Pretrainer, Rollout, categorical_log_prob, trading_utility
+from cmf.dataset import bank_stats, load_splits, load_windows
 from cmf.simulator import LagMarket, stack_obs
 
 console = Console()
@@ -56,11 +56,65 @@ def _seed_everything(seed: int) -> np.random.Generator:
     return np.random.default_rng(seed)
 
 
-def _make_envs(cfg: TrainConfig, n: int, rng: np.random.Generator) -> list[LagMarket]:
-    return [LagMarket(cfg, np.random.default_rng(int(rng.integers(0, 2**31 - 1)))) for _ in range(n)]
+def _make_envs(
+    cfg: TrainConfig,
+    n: int,
+    rng: np.random.Generator,
+    bank: list | None = None,
+    real_mix: float | None = None,
+) -> list[LagMarket]:
+    envs = []
+    for _ in range(n):
+        env = LagMarket(cfg, np.random.default_rng(int(rng.integers(0, 2**31 - 1))))
+        env.bank = bank
+        env.real_mix = cfg.real_mix if real_mix is None else real_mix
+        envs.append(env)
+    return envs
 
 
-def _collect_pretrain_batch(envs: list[LagMarket], batch: int) -> dict[str, np.ndarray]:
+def _set_curriculum(cfg: TrainConfig, frac: float) -> None:
+    frac = float(np.clip(frac, 0.0, 1.0))
+    cfg.lag_min = 6.0 - 2.5 * frac
+    cfg.lag_max = 8.0 + 8.0 * frac
+
+
+def _score_packed(model: FusionModel, batch: dict[str, np.ndarray]) -> dict[str, float]:
+    model.eval()
+    out = model(
+        mx.array(batch["fast"]),
+        mx.array(batch["slow"]),
+        mx.array(batch["pos"]),
+        mx.array(batch["lag"]),
+    )
+    mx.eval(out.p_up)
+    logit = np.array(out.p_up, dtype=np.float64)
+    y = batch["p_up"].astype(np.float64)
+    p = 1.0 / (1.0 + np.exp(-np.clip(logit, -20, 20)))
+    brier = float(np.mean((p - y) ** 2))
+    nll = float(-np.mean(y * np.log(p + 1e-8) + (1.0 - y) * np.log(1.0 - p + 1e-8)))
+    acc = float(np.mean((p > 0.5) == (y > 0.5)))
+    util = float(
+        np.array(
+            trading_utility(
+                mx.array(batch["p_up"] * 0 + out.p_up),
+                mx.array(batch["p_up"]),
+                mx.array(batch["ask"]),
+                mx.array(batch["bid"]),
+            )
+        )
+    )
+    # 10-bin ECE
+    bins = np.linspace(0, 1, 11)
+    ece = 0.0
+    for i in range(10):
+        m = (p >= bins[i]) & (p < bins[i + 1] if i < 9 else p <= 1.0)
+        if m.any():
+            ece += float(m.mean() * abs(p[m].mean() - y[m].mean()))
+    model.train()
+    return {"brier": brier, "nll": nll, "acc": acc, "utility": util, "ece": ece, "score": util - 2.0 * brier}
+
+
+def _collect_pretrain_batch(envs: list[LagMarket], batch: int, *, keep_holds: bool = False, noise: float = 0.0) -> dict[str, np.ndarray]:
     """Take several labeled frames from each reset instead of one reset per row."""
     obs, p_up, nxt, lag, oracle, ask, bid = [], [], [], [], [], [], []
     env_i = 0
@@ -81,7 +135,7 @@ def _collect_pretrain_batch(envs: list[LagMarket], batch: int) -> dict[str, np.n
             info = env.labels()
             action = int(info["oracle"])
             # keep every trade label; downsample HOLDs so BC does not collapse
-            if action == 0 and np.random.random() < 0.55:
+            if not keep_holds and action == 0 and np.random.random() < 0.55:
                 continue
             obs.append(o)
             p_up.append(info["p_up"])
@@ -99,6 +153,9 @@ def _collect_pretrain_batch(envs: list[LagMarket], batch: int) -> dict[str, np.n
     packed["oracle"] = np.asarray(oracle[:batch], dtype=np.int32)
     packed["ask"] = np.asarray(ask[:batch], dtype=np.float32)
     packed["bid"] = np.asarray(bid[:batch], dtype=np.float32)
+    if noise > 0:
+        packed["fast"] = packed["fast"] + np.random.normal(0.0, noise, packed["fast"].shape).astype(np.float32)
+        packed["slow"] = packed["slow"] + np.random.normal(0.0, noise, packed["slow"].shape).astype(np.float32)
     return packed
 
 
@@ -308,70 +365,122 @@ def save_model(model: FusionModel, path: Path, cfg: TrainConfig | None = None) -
 def train(cfg: TrainConfig) -> dict:
     rng = _seed_everything(cfg.seed)
     cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    windows = load_windows()
-    LagMarket.path_bank = windows or None
-    console.print(f"real data: {bank_stats(windows)}")
+    train_w, val_w, test_w = load_splits()
+    if not train_w:
+        train_w = load_windows()
+        val_w, test_w = train_w, train_w
+    LagMarket.path_bank = train_w or None
+    console.print(f"real data train {bank_stats(train_w)} | val {len(val_w)} | test {len(test_w)}")
     fusion = FusionModel(cfg)
     lacuna = LacunaModel(cfg)
     mx.eval(fusion.parameters(), lacuna.parameters())
 
-    console.rule("[bold]cross-market fusion")
+    console.rule("[bold]CMF-2 tight train")
     console.print(
         f"native C++ engine: {has_native()}  |  fusion params: {fusion.count_params():,}  |  "
-        f"lacuna params: {lacuna.count_params():,}  |  device: {mx.default_device()}"
+        f"device: {mx.default_device()}  |  budget {cfg.train_hours:.2f}h"
     )
 
-    pre_envs = _make_envs(cfg, max(8, cfg.pretrain_batch // 8), rng)
-    pre = Pretrainer(cfg, fusion)
+    n_env = max(8, cfg.pretrain_batch // 8)
+    pre_envs = _make_envs(cfg, n_env, rng, bank=train_w, real_mix=cfg.real_mix)
+    val_envs = _make_envs(cfg, max(4, n_env // 2), rng, bank=val_w or train_w, real_mix=1.0)
+    pre = Pretrainer(cfg, fusion, steps=cfg.pretrain_steps)
+    ema = EMA(fusion, cfg.ema_decay)
     t0 = time.time()
+    deadline = t0 + max(cfg.train_hours, 0.02) * 3600.0
+    work_until = t0 + max(cfg.train_hours, 0.02) * 3600.0 * 0.86
     pre_losses = []
-    for step in range(cfg.pretrain_steps):
-        batch = _collect_pretrain_batch(pre_envs, cfg.pretrain_batch)
-        stats = pre.step(batch)
-        pre_losses.append(stats["pretrain_loss"])
-        if step == 0 or (step + 1) % 50 == 0 or step + 1 == cfg.pretrain_steps:
-            console.print(f"pretrain {step + 1:>4}/{cfg.pretrain_steps}  loss={stats['pretrain_loss']:.4f}")
-    console.print(f"pretrain done in {time.time() - t0:.1f}s  last_loss={pre_losses[-1]:.4f}")
-    save_model(fusion, cfg.checkpoint_dir / "fusion.safetensors", cfg)
-    _calibrate_temperature(fusion, pre_envs, n=192)
-    save_model(fusion, cfg.checkpoint_dir / "fusion.safetensors", cfg)
+    val_hist = []
+    best = {"score": -1e9, "step": 0}
+    best_path = cfg.checkpoint_dir / "fusion.safetensors"
 
-    history = []
-    if cfg.ppo_updates <= 0:
-        console.print("ppo skipped (decision is P(up) vs the book; actor PPO is optional)")
+    for step in range(cfg.pretrain_steps):
+        if time.time() >= work_until:
+            console.print(f"wall clock stop at step {step + 1} ({(time.time() - t0) / 60:.1f} min)")
+            break
+        _set_curriculum(cfg, step / max(cfg.pretrain_steps - 1, 1))
+        batch = _collect_pretrain_batch(pre_envs, cfg.pretrain_batch, noise=cfg.aug_noise)
+        stats = pre.step(batch)
+        ema.update(fusion)
+        pre_losses.append(stats["pretrain_loss"])
+        do_val = (step + 1) % max(cfg.val_every, 1) == 0 or step == 0 or step + 1 == cfg.pretrain_steps
+        if step == 0 or (step + 1) % 50 == 0 or do_val:
+            msg = f"pretrain {step + 1:>5}/{cfg.pretrain_steps}  loss={stats['pretrain_loss']:.4f}"
+            if do_val:
+                snap = fusion.parameters()
+                ema.copy_to(fusion)
+                vbatch = _collect_pretrain_batch(val_envs, cfg.val_frames, keep_holds=True, noise=0.0)
+                v = _score_packed(fusion, vbatch)
+                val_hist.append({"step": step + 1, **v})
+                msg += (
+                    f"  val brier={v['brier']:.4f} nll={v['nll']:.4f} "
+                    f"util={v['utility']:+.4f} ece={v['ece']:.3f} acc={100 * v['acc']:.1f}%"
+                )
+                if v["score"] > best["score"]:
+                    best = {"score": v["score"], "step": step + 1, **v}
+                    save_model(fusion, best_path, cfg)
+                    msg += "  [best]"
+                fusion.update(snap)
+                mx.eval(fusion.parameters())
+            console.print(msg)
+
+    console.print(f"pretrain done in {time.time() - t0:.1f}s  last_loss={pre_losses[-1]:.4f}  best_step={best['step']}")
+    if best_path.exists():
+        fusion.load_weights(str(best_path))
+        mx.eval(fusion.parameters())
     else:
+        ema.copy_to(fusion)
+
+    remain = deadline - time.time()
+    ft = cfg.finetune_steps if remain > 90 else 0
+    if ft > 0:
+        console.print(f"utility fine-tune {ft} steps")
+        fine = Pretrainer(cfg, fusion, lr=cfg.finetune_lr, steps=ft)
+        old_u, cfg.utility_coef = cfg.utility_coef, cfg.utility_coef * 1.4
+        for i in range(ft):
+            if time.time() >= deadline - 45:
+                break
+            batch = _collect_pretrain_batch(pre_envs, cfg.pretrain_batch, noise=cfg.aug_noise * 0.4)
+            fine.step(batch)
+            ema.update(fusion)
+            if i == 0 or (i + 1) % 50 == 0 or i + 1 == ft:
+                console.print(f"finetune {i + 1:>4}/{ft}")
+        cfg.utility_coef = old_u
+        ema.copy_to(fusion)
+
+    _calibrate_temperature(fusion, val_envs, n=min(256, max(64, cfg.val_frames)))
+    save_model(fusion, best_path, cfg)
+
+    history = val_hist
+    if cfg.ppo_updates > 0 and time.time() < deadline - 60:
         f_trainer = FusionTrainer(cfg, fusion)
         l_trainer = LacunaTrainer(cfg, lacuna)
-        f_envs = _make_envs(cfg, cfg.rollout_envs, rng)
-        l_envs = _make_envs(cfg, cfg.rollout_envs, rng)
-    for upd in range(cfg.ppo_updates):
-        f_roll, f_pnl = _rollout_fusion(cfg, f_trainer, f_envs)
-        l_roll, l_pnl = _rollout_lacuna(cfg, l_trainer, l_envs)
-        f_stats = f_trainer.update(f_roll)
-        l_stats = l_trainer.update(l_roll)
-        row = {
-            "update": upd + 1,
-            "fusion_loss": f_stats["loss"],
-            "fusion_kl": f_stats["kl"],
-            "fusion_pnl": f_pnl,
-            "lacuna_loss": l_stats["loss"],
-            "lacuna_pnl": l_pnl,
-        }
-        history.append(row)
-        console.print(
-            f"ppo {upd + 1:>3}/{cfg.ppo_updates}  "
-            f"fusion loss={f_stats['loss']:.3f} kl={f_stats['kl']:.4f} pnl={f_pnl:+.2f}  "
-            f"lacuna loss={l_stats['loss']:.3f} pnl={l_pnl:+.2f}"
-        )
+        f_envs = _make_envs(cfg, cfg.rollout_envs, rng, bank=train_w)
+        l_envs = _make_envs(cfg, cfg.rollout_envs, rng, bank=train_w)
+        for upd in range(cfg.ppo_updates):
+            f_roll, f_pnl = _rollout_fusion(cfg, f_trainer, f_envs)
+            l_roll, l_pnl = _rollout_lacuna(cfg, l_trainer, l_envs)
+            f_stats = f_trainer.update(f_roll)
+            l_stats = l_trainer.update(l_roll)
+            console.print(
+                f"ppo {upd + 1:>3}/{cfg.ppo_updates}  "
+                f"fusion loss={f_stats['loss']:.3f} kl={f_stats['kl']:.4f} pnl={f_pnl:+.2f}  "
+                f"lacuna pnl={l_pnl:+.2f}"
+            )
+    else:
+        console.print("ppo skipped (P(up) vs book; actor PPO is optional)")
 
+    n_eval = cfg.eval_episodes if cfg.train_hours >= 0.4 else max(8, min(cfg.eval_episodes, 16))
+    LagMarket.path_bank = test_w or val_w or train_w
     results = {
-        "fusion": evaluate(cfg, "fusion", fusion, cfg.eval_episodes, np.random.default_rng(cfg.seed + 999)),
-        "lacuna": evaluate(cfg, "lacuna", lacuna, cfg.eval_episodes, np.random.default_rng(cfg.seed + 999)),
-        "oracle": evaluate(cfg, "oracle", None, cfg.eval_episodes, np.random.default_rng(cfg.seed + 999)),
-        "random": evaluate(cfg, "random", None, cfg.eval_episodes, np.random.default_rng(cfg.seed + 999)),
+        "fusion": evaluate(cfg, "fusion", fusion, n_eval, np.random.default_rng(cfg.seed + 999)),
+        "oracle": evaluate(cfg, "oracle", None, n_eval, np.random.default_rng(cfg.seed + 999)),
+        "random": evaluate(cfg, "random", None, n_eval, np.random.default_rng(cfg.seed + 999)),
     }
+    if cfg.train_hours >= 0.4:
+        results["lacuna"] = evaluate(cfg, "lacuna", lacuna, n_eval, np.random.default_rng(cfg.seed + 999))
 
-    table = Table(title=f"held-out eval ({cfg.eval_episodes} episodes)")
+    table = Table(title=f"held-out eval ({n_eval} episodes, test windows)")
     table.add_column("policy")
     table.add_column("mean PnL", justify="right")
     table.add_column("std", justify="right")
@@ -398,10 +507,12 @@ def train(cfg: TrainConfig) -> dict:
     lacuna.save_weights(str(cfg.checkpoint_dir / "lacuna.safetensors"))
     summary = {
         "native": has_native(),
-        "real_windows": len(windows),
+        "real_windows": {"train": len(train_w), "val": len(val_w), "test": len(test_w)},
         "fusion_params": fusion.count_params(),
         "lacuna_params": lacuna.count_params(),
         "pretrain_loss": pre_losses[-1] if pre_losses else None,
+        "best_val": best,
+        "seconds": time.time() - t0,
         "results": results,
         "history": history,
         "config": json.loads(cfg.model_dump_json()),

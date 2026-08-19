@@ -1,5 +1,7 @@
 # CMF-2 50M
 
+Weights: [huggingface.co/shubhxho/cmf-2](https://huggingface.co/shubhxho/cmf-2)  
+Windows: [huggingface.co/datasets/shubhxho/cmf-15m-binance](https://huggingface.co/datasets/shubhxho/cmf-15m-binance)  
 Model card: [shubhxho.github.io/polymarket-model](https://shubhxho.github.io/polymarket-model/)
 Lab (hacking / sim): [shubhxho.github.io/polymarket-model/lab.html](https://shubhxho.github.io/polymarket-model/lab.html)
 
@@ -67,7 +69,8 @@ If you need a one-line label: **SOTA open-source 15m fusion model in this repo, 
 uv sync
 uv run cmf fetch-data --days 45    # 17k+ real 15m Binance windows
 uv run pytest
-uv run cmf train                   # 800 pretrain + temperature scale (PPO optional)
+uv run cmf train                   # 3.5h MLX run: split/EMA/val/best-ckpt/utility fine-tune
+uv run cmf train --hours 0.08      # ~5 min indication
 uv run cmf live --load checkpoints/fusion.safetensors --size 5
 ```
 

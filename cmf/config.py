@@ -31,12 +31,21 @@ class TrainConfig(BaseModel):
     lag_min: float = 4.0
     lag_max: float = 14.0
 
-    pretrain_steps: int = 800
-    pretrain_batch: int = 24
+    pretrain_steps: int = 12_000
+    pretrain_batch: int = 32
     pretrain_lr: float = 1.5e-4
+    warmup_steps: int = 400
+    train_hours: float = 3.5
+    val_every: int = 400
+    val_frames: int = 256
+    ema_decay: float = 0.999
+    aug_noise: float = 0.02
+    real_mix: float = 0.88
+    finetune_steps: int = 1_200
+    finetune_lr: float = 4e-5
 
-    utility_coef: float = 0.55
-    brier_coef: float = 0.45
+    utility_coef: float = 0.7
+    brier_coef: float = 0.55
     unc_coef: float = 0.12
 
     # 0 = skip PPO. The live rule is P(up) vs the book; PPO on the 3-way
@@ -57,7 +66,7 @@ class TrainConfig(BaseModel):
     target_kl: float = 0.03
     weight_decay: float = 0.02
 
-    eval_episodes: int = 48
+    eval_episodes: int = 80
     seed: int = 7
     checkpoint_dir: Path = Field(default=Path("checkpoints"))
 
